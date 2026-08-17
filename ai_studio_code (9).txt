@@ -1,6 +1,6 @@
 -- ==========================================================
---  CRIMSON BLADE - HIGH-END MM2 & UNIVERSAL SUITE (MOBILE OPTIMIZED)
---  Kinematic Ballistic Engine + True Silent Aim & Auto-Knife
+--  CRIMSON BLADE - HIGH-END MM2 & UNIVERSAL SUITE
+--  Kinematic Ballistic Engine + True Silent Aim
 -- ==========================================================
 
 local Players = game:GetService("Players")
@@ -17,17 +17,16 @@ local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
 -- [[ CONSTANTES BALÍSTICAS MM2 ]]
-local BULLET_SPEED = 1000 -- Velocidad de bala (studs/s)
-local KNIFE_SPEED = 220   -- Velocidad de lanzamiento de cuchillo (studs/s)
+local BULLET_SPEED = 1000 -- Velocidad de proyectil del revólver en MM2 (studs/s)
 
 -- [[ CONTENEDORES DE DATOS GLOBALES ]]
 local playerDataESP = {}
 local gamePlayerData = {}
 getgenv().targetPlayerInputText = ""
 
--- [[ ESTADOS SILENT AIM ]]
+-- [[ ESTADO SILENT AIM ]]
 local silentAimEnabled = true
-local silentAimFOV = 220
+local silentAimFOV = 200
 local useFOVCheck = false
 
 local autoShootMurderer = false
@@ -43,14 +42,11 @@ local gunButtonGui = nil
 local knifeButtonGui = nil
 
 local MobileTargetGui = nil
-pcall(function()
-    if gethui then
-        MobileTargetGui = gethui()
-    else
-        MobileTargetGui = game:GetService("CoreGui")
-    end
-end)
-if not MobileTargetGui then MobileTargetGui = LocalPlayer:WaitForChild("PlayerGui") end
+if gethui then
+    MobileTargetGui = gethui()
+else
+    MobileTargetGui = game:GetService("CoreGui")
+end
 
 -- [[ BUSCADORES DE ROLES ]]
 local function getPlayerByName(list)
@@ -354,44 +350,35 @@ local function stopFly()
     local char = LocalPlayer.Character
     if char then
         local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then hum:PlatformStand = false end
+        if hum then hum.PlatformStand = false end
     end
     isFlying = false
     currentFlySpeed = 0
 end
 
--- Carga segura y actualizada de Rayfield (Dominio Oficial Sirius)
-local successRayfield, Rayfield = pcall(function()
-    return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
-end)
-
-if not successRayfield or not Rayfield then
-    warn("Crimson Blade: No se pudo cargar Rayfield.")
-    return
-end
+-- Carga de Rayfield
+local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
 -- ==========================================================
 -- GESTIÓN DE ROLES Y EVENTOS MM2
 -- ==========================================================
-pcall(function()
-    local globalRemotes = ReplicatedStorage:WaitForChild("Remotes", 5)
-    if globalRemotes and globalRemotes:FindFirstChild("Gameplay") and globalRemotes.Gameplay:FindFirstChild("PlayerDataChanged") then
-        globalRemotes.Gameplay.PlayerDataChanged.OnClientEvent:Connect(function(data)
-            gamePlayerData = data
-            local hasMurd = false
-            for player, info in pairs(data) do
-                if info.Role == "Murderer" then
-                    cachedMurderer = Players:FindFirstChild(player)
-                    hasMurd = true
-                end
-            end
-            if not hasMurd then
-                cachedMurderer = nil
-                resetRoundCombatStates()
-            end
-        end)
-    end
-end)
+local globalRemotes = ReplicatedStorage:WaitForChild("Remotes", 5)
+if globalRemotes and globalRemotes:FindFirstChild("Gameplay") and globalRemotes.Gameplay:FindFirstChild("PlayerDataChanged") then
+	globalRemotes.Gameplay.PlayerDataChanged.OnClientEvent:Connect(function(data)
+		gamePlayerData = data
+        local hasMurd = false
+		for player, info in pairs(data) do
+			if info.Role == "Murderer" then
+				cachedMurderer = Players:FindFirstChild(player)
+                hasMurd = true
+			end
+		end
+        if not hasMurd then
+            cachedMurderer = nil
+            resetRoundCombatStates()
+        end
+	end)
+end
 
 task.spawn(function()
 	while true do
@@ -408,9 +395,9 @@ task.spawn(function()
 end)
 
 -- ==========================================================
--- MOTOR BALÍSTICO CINEMÁTICO PERFECCIONADO
+-- MOTOR BALÍSTICO CINEMÁTICO ADAPTATIVO (ANTI-STRAFE, JUMP & DISTANCE DECAY)
 -- ==========================================================
-local function getKinematicPredictedPosition(targetPlayer, originPos, projectileSpeed)
+local function getKinematicPredictedPosition(targetPlayer, originPos)
     if not targetPlayer or not targetPlayer.Character then return nil end
     
     local char = targetPlayer.Character
@@ -420,45 +407,102 @@ local function getKinematicPredictedPosition(targetPlayer, originPos, projectile
     
     if not root or not torso or not hum or hum.Health <= 0 then return nil end
 
-    local speedToUse = projectileSpeed or BULLET_SPEED
     local currentPos = torso.Position
     local velocity = root.AssemblyLinearVelocity
-    local distance = (currentPos - originPos).Magnitude
-    
-    local pingSeconds = (LocalPlayer:GetNetworkPing() * 0.5) + 0.015
-    local timeToHit = pingSeconds + (distance / speedToUse)
-    
     local moveDir = hum.MoveDirection
-    local speed = velocity.Magnitude
-    local predX = currentPos.X
-    local predZ = currentPos.Z
+    local walkSpeed = hum.WalkSpeed
+    local gravity = Workspace.Gravity
 
-    if speed >= 0.8 and moveDir.Magnitude >= 0.05 then
-        predX = currentPos.X + (velocity.X * timeToHit * 0.95)
-        predZ = currentPos.Z + (velocity.Z * timeToHit * 0.95)
+    -- Latencia de red en segundos
+    local pingSeconds = LocalPlayer:GetNetworkPing()
+
+    -- Estimación del vector de velocidad horizontal
+    local horizontalVel
+    if moveDir.Magnitude > 0.05 then
+        local currentHorizontalMagnitude = Vector2.new(velocity.X, velocity.Z).Magnitude
+        local speedMagnitude = math.max(currentHorizontalMagnitude, walkSpeed)
+        horizontalVel = Vector3.new(moveDir.X, 0, moveDir.Z).Unit * speedMagnitude
+    else
+        horizontalVel = Vector3.new(velocity.X, 0, velocity.Z)
     end
 
-    local gravity = Workspace.Gravity
-    local predY = currentPos.Y
-    local inAir = hum.FloorMaterial == Enum.Material.Air or math.abs(velocity.Y) > 0.8
+    local verticalVel = velocity.Y
+    local inAir = (hum.FloorMaterial == Enum.Material.Air) or (math.abs(verticalVel) > 0.5)
 
-    if inAir then
-        predY = currentPos.Y + (velocity.Y * timeToHit) - (0.5 * gravity * (timeToHit ^ 2))
-        
-        local floorCheckRay = Workspace:Raycast(currentPos, Vector3.new(0, -6, 0))
-        if floorCheckRay then
-            local floorY = floorCheckRay.Position.Y + 2.3
-            if predY < floorY then
-                predY = floorY
+    -- Configuración de Raycast para exclusión de entidades
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    rayParams.FilterDescendantsInstances = {char, LocalPlayer.Character}
+    rayParams.IgnoreWater = true
+
+    -- Offset de altura entre el punto de impacto (torso) y el pivote del suelo
+    local torsoOffset = (torso.Position.Y - root.Position.Y) + 1.5
+
+    -- Inicialización cinemática
+    local rawDistance = (currentPos - originPos).Magnitude
+    local timeToHit = pingSeconds + (rawDistance / BULLET_SPEED)
+    local predictedPos = currentPos
+
+    -- Bucle numérico iterativo de convergencia con factor de amortiguación por distancia
+    for _ = 1, 3 do
+        local dynamicDistance = (predictedPos - originPos).Magnitude
+
+        -- Factor de amortiguación por distancia (Distance Decay Factor)
+        local decayFactor = 1.0
+        if dynamicDistance > 40 then
+            local decayRatio = math.clamp((dynamicDistance - 40) / 120, 0, 1)
+            decayFactor = math.clamp(1.0 - (decayRatio * (0.35 + (pingSeconds * 1.5))), 0.45, 1.0)
+        end
+
+        local effectiveHorizontalVel = horizontalVel * decayFactor
+        local predX = currentPos.X + (effectiveHorizontalVel.X * timeToHit)
+        local predZ = currentPos.Z + (effectiveHorizontalVel.Z * timeToHit)
+        local predY = currentPos.Y
+
+        if inAir then
+            -- 1. Ecuación parabólica libre
+            predY = currentPos.Y + (verticalVel * timeToHit) - (0.5 * gravity * (timeToHit ^ 2))
+
+            -- 2. LIMITADOR DE TECHO (Ceiling Check)
+            local upwardDistance = math.max(predY - currentPos.Y + 3, 5)
+            local ceilingRay = Workspace:Raycast(
+                Vector3.new(predX, currentPos.Y, predZ),
+                Vector3.new(0, upwardDistance, 0),
+                rayParams
+            )
+            if ceilingRay then
+                local maxCeilingY = ceilingRay.Position.Y - 1.0
+                if predY > maxCeilingY then
+                    predY = maxCeilingY
+                end
+            end
+
+            -- 3. LIMITADOR DE SUELO (Ground Check)
+            local groundRayOriginY = math.max(currentPos.Y, predY) + 10
+            local groundRay = Workspace:Raycast(
+                Vector3.new(predX, groundRayOriginY, predZ),
+                Vector3.new(0, -120, 0),
+                rayParams
+            )
+            if groundRay then
+                local minFloorY = groundRay.Position.Y + torsoOffset
+                if predY < minFloorY then
+                    predY = minFloorY
+                end
             end
         end
+
+        predictedPos = Vector3.new(predX, predY, predZ)
+        
+        -- Recálculo de distancia dinámica y tiempo de impacto
+        timeToHit = pingSeconds + ((predictedPos - originPos).Magnitude / BULLET_SPEED)
     end
 
-    return Vector3.new(predX, predY, predZ)
+    return predictedPos
 end
 
 -- ==========================================================
--- HOOK DE SILENT AIM (__NAMECALL)
+-- HOOK DE SILENT AIM REAL (__NAMECALL)
 -- ==========================================================
 local function isWithinFOV(targetPosition)
     if not useFOVCheck then return true end
@@ -471,160 +515,102 @@ local function isWithinFOV(targetPosition)
 end
 
 if hookmetamethod then
-    pcall(function()
-        local oldNamecall
-        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            local args = {...}
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
 
-            if not checkcaller() and silentAimEnabled and method == "FireServer" and tostring(self) == "Shoot" then
-                local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Gun")
-                if tool and self.Parent == tool then
-                    local murderer = cachedMurderer or findMurderer() or findSheriffNotMe()
-                    if murderer and murderer.Character then
-                        local mTorso = murderer.Character:FindFirstChild("UpperTorso") or murderer.Character:FindFirstChild("Torso") or murderer.Character:FindFirstChild("HumanoidRootPart")
-                        local rightHand = LocalPlayer.Character:FindFirstChild("RightHand") or LocalPlayer.Character:FindFirstChild("Right Arm") or LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not checkcaller() and silentAimEnabled and method == "FireServer" and tostring(self) == "Shoot" then
+            local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Gun")
+            if tool and self.Parent == tool then
+                local murderer = cachedMurderer or findMurderer() or findSheriffNotMe()
+                if murderer and murderer.Character then
+                    local mTorso = murderer.Character:FindFirstChild("UpperTorso") or murderer.Character:FindFirstChild("Torso") or murderer.Character:FindFirstChild("HumanoidRootPart")
+                    local rightHand = LocalPlayer.Character:FindFirstChild("RightHand") or LocalPlayer.Character:FindFirstChild("Right Arm") or LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
 
-                        if mTorso and rightHand then
-                            local shootOrigin = rightHand.Position
+                    if mTorso and rightHand then
+                        local shootOrigin = rightHand.Position
 
-                            if isWithinFOV(mTorso.Position) then
-                                local rayParams = RaycastParams.new()
-                                rayParams.FilterType = Enum.RaycastFilterType.Exclude
-                                rayParams.FilterDescendantsInstances = {LocalPlayer.Character, murderer.Character}
-                                rayParams.IgnoreWater = true
+                        if isWithinFOV(mTorso.Position) then
+                            local rayParams = RaycastParams.new()
+                            rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                            rayParams.FilterDescendantsInstances = {LocalPlayer.Character, murderer.Character}
+                            rayParams.IgnoreWater = true
 
-                                local ray = Workspace:Raycast(shootOrigin, (mTorso.Position - shootOrigin), rayParams)
-                                local wallBlocking = (ray and ray.Instance and ray.Instance.CanCollide and ray.Instance.Transparency < 0.8)
+                            local ray = Workspace:Raycast(shootOrigin, (mTorso.Position - shootOrigin), rayParams)
+                            local wallBlocking = (ray and ray.Instance and ray.Instance.CanCollide and ray.Instance.Transparency < 0.8)
 
-                                if not wallBlocking then
-                                    local predictedTargetPos = getKinematicPredictedPosition(murderer, shootOrigin, BULLET_SPEED)
-                                    if predictedTargetPos then
-                                        args[1] = CFrame.new(shootOrigin)
-                                        args[2] = CFrame.new(predictedTargetPos)
-                                        return oldNamecall(self, unpack(args))
-                                    end
+                            if not wallBlocking then
+                                local predictedTargetPos = getKinematicPredictedPosition(murderer, shootOrigin)
+                                if predictedTargetPos then
+                                    args[1] = CFrame.new(shootOrigin)
+                                    args[2] = CFrame.new(predictedTargetPos)
+                                    return oldNamecall(self, unpack(args))
                                 end
                             end
                         end
                     end
                 end
             end
+        end
 
-            return oldNamecall(self, ...)
-        end))
-    end)
+        return oldNamecall(self, ...)
+    end))
 end
 
--- ==========================================================
--- ACCIÓN DE DISPARO (GUN)
--- ==========================================================
 local function runShootActionNATIVE()
-    pcall(function()
-        local char = LocalPlayer.Character
-        if not char then return end
+    local char = LocalPlayer.Character
+    if not char then return end
 
-        local backpack = LocalPlayer:FindFirstChild("Backpack")
-        local gun = char:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
-        if not gun then return end
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local gun = char:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
+    if not gun then return end
 
-        if gun.Parent == backpack then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum then hum:EquipTool(gun) end
-            task.wait(0.04)
-        end
+    if gun.Parent == backpack then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then hum:EquipTool(gun) end
+        task.wait(0.05)
+    end
 
-        local murderer = cachedMurderer or findMurderer() or findSheriffNotMe()
-        if not murderer or not murderer.Character then return end
+    local murderer = cachedMurderer or findMurderer() or findSheriffNotMe()
+    if not murderer or not murderer.Character then return end
 
-        local mRoot = murderer.Character:FindFirstChild("HumanoidRootPart")
-        local mTorso = murderer.Character:FindFirstChild("UpperTorso") or murderer.Character:FindFirstChild("Torso") or mRoot
-        local myRoot = char:FindFirstChild("HumanoidRootPart")
-        local rightHand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm") or myRoot
-        if not mRoot or not mTorso or not myRoot or not rightHand then return end
+    local mRoot = murderer.Character:FindFirstChild("HumanoidRootPart")
+    local mTorso = murderer.Character:FindFirstChild("UpperTorso") or murderer.Character:FindFirstChild("Torso") or mRoot
+    local myRoot = char:FindFirstChild("HumanoidRootPart")
+    local rightHand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm") or myRoot
+    if not mRoot or not mTorso or not myRoot or not rightHand then return end
 
-        local shootOrigin = rightHand.Position
+    local shootOrigin = rightHand.Position
 
-        local rayParams = RaycastParams.new()
-        rayParams.FilterType = Enum.RaycastFilterType.Exclude
-        rayParams.FilterDescendantsInstances = {char, murderer.Character}
-        rayParams.IgnoreWater = true
-        
-        local ray = Workspace:Raycast(shootOrigin, (mTorso.Position - shootOrigin), rayParams)
-        if ray and ray.Instance and ray.Instance.CanCollide and ray.Instance.Transparency < 0.8 then
-            return
-        end
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    rayParams.FilterDescendantsInstances = {char, murderer.Character}
+    rayParams.IgnoreWater = true
+    
+    local ray = Workspace:Raycast(shootOrigin, (mTorso.Position - shootOrigin), rayParams)
+    if ray and ray.Instance and ray.Instance.CanCollide and ray.Instance.Transparency < 0.8 then
+        return
+    end
 
-        local targetPredictedPos = getKinematicPredictedPosition(murderer, shootOrigin, BULLET_SPEED)
-        if not targetPredictedPos then return end
+    local targetPredictedPos = getKinematicPredictedPosition(murderer, shootOrigin)
+    if not targetPredictedPos then return end
 
-        local shootRemote = gun:FindFirstChild("Shoot")
-        if shootRemote then
+    local shootRemote = gun:FindFirstChild("Shoot")
+    if shootRemote then
+        pcall(function()
             shootRemote:FireServer(
                 CFrame.new(shootOrigin),
                 CFrame.new(targetPredictedPos)
             )
-        end
-    end)
+        end)
+    end
 end
 
--- ==========================================================
--- ACCIÓN DE LANZAR CUCHILLO
--- ==========================================================
-local function runKnifeThrowActionNATIVE()
-    pcall(function()
-        local char = LocalPlayer.Character
-        if not char then return end
-
-        local backpack = LocalPlayer:FindFirstChild("Backpack")
-        local knife = char:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
-        if not knife then 
-            Rayfield:Notify({Title = "Error", Content = "No tienes el cuchillo.", Duration = 2})
-            return 
-        end
-
-        if knife.Parent == backpack then
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            if hum then hum:EquipTool(knife) end
-            task.wait(0.05)
-        end
-
-        local target = findNearestPlayer()
-        if not target or not target.Character then 
-            Rayfield:Notify({Title = "Aviso", Content = "No hay jugadores cercanos.", Duration = 2})
-            return 
-        end
-
-        local tRoot = target.Character:FindFirstChild("HumanoidRootPart")
-        local tTorso = target.Character:FindFirstChild("UpperTorso") or target.Character:FindFirstChild("Torso") or tRoot
-        local myRoot = char:FindFirstChild("HumanoidRootPart")
-        local rightHand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm") or myRoot
-        if not tRoot or not tTorso or not myRoot or not rightHand then return end
-
-        local throwOrigin = rightHand.Position
-        local predictedTargetPos = getKinematicPredictedPosition(target, throwOrigin, KNIFE_SPEED) or tTorso.Position
-
-        local equippedKnife = char:FindFirstChild("Knife")
-        if equippedKnife then
-            local throwRemote = equippedKnife:FindFirstChild("Throw") or equippedKnife:FindFirstChild("Slash") or equippedKnife:FindFirstChild("Stab")
-            if throwRemote then
-                if equippedKnife:FindFirstChild("Throw") then
-                    equippedKnife.Throw:FireServer(
-                        CFrame.new(throwOrigin),
-                        CFrame.new(predictedTargetPos)
-                    )
-                elseif equippedKnife:FindFirstChild("Stab") then
-                    equippedKnife.Stab:FireServer("Slash")
-                end
-            end
-        end
-    end)
-end
-
--- BUCLES EN SEGUNDO PLANO
+-- BUCLE AUTO SHOOT MURDERER
 task.spawn(function()
     while true do
-        task.wait(0.16)
+        task.wait(0.18)
         if autoShootMurderer then
             pcall(function()
                 local hasGun = (LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Gun")) or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Gun"))
@@ -636,6 +622,7 @@ task.spawn(function()
     end
 end)
 
+-- KILL CLOSEST PLAYER
 task.spawn(function()
     while true do
         task.wait(0.2)
@@ -665,41 +652,40 @@ task.spawn(function()
     end
 end)
 
+-- MATAR A TODOS
 local function executeKillEveryone()
-    pcall(function()
-        if findMurderer() ~= LocalPlayer then
-            Rayfield:Notify({Title = "Error", Content = "No eres el Asesino de la partida.", Duration = 3})
+    if findMurderer() ~= LocalPlayer then
+        Rayfield:Notify({Title = "Error", Content = "No eres el Asesino de la partida.", Duration = 3})
+        return
+    end
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+
+    local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if not LocalPlayer.Character:FindFirstChild("Knife") then
+        if LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Knife") and hum then
+            hum:EquipTool(LocalPlayer.Backpack.Knife)
+        else
+            Rayfield:Notify({Title = "Error", Content = "No se encontró el cuchillo.", Duration = 3})
             return
         end
-        if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+    end
 
-        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if not LocalPlayer.Character:FindFirstChild("Knife") then
-            if LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Knife") and hum then
-                hum:EquipTool(LocalPlayer.Backpack.Knife)
-            else
-                Rayfield:Notify({Title = "Error", Content = "No se encontró el cuchillo.", Duration = 3})
-                return
+    local myHRP = LocalPlayer.Character.HumanoidRootPart
+    local knife = LocalPlayer.Character:FindFirstChild("Knife")
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local pHum = player.Character:FindFirstChildOfClass("Humanoid")
+            if pHum and pHum.Health > 0 then
+                player.Character.HumanoidRootPart.CFrame = myHRP.CFrame + (myHRP.CFrame.LookVector * 1.5)
             end
         end
+    end
 
-        local myHRP = LocalPlayer.Character.HumanoidRootPart
-        local knife = LocalPlayer.Character:FindFirstChild("Knife")
-
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                local pHum = player.Character:FindFirstChildOfClass("Humanoid")
-                if pHum and pHum.Health > 0 then
-                    player.Character.HumanoidRootPart.CFrame = myHRP.CFrame + (myHRP.CFrame.LookVector * 1.5)
-                end
-            end
-        end
-
-        task.wait(0.1)
-        if knife and knife:FindFirstChild("Stab") then
-            knife.Stab:FireServer("Slash")
-        end
-    end)
+    task.wait(0.1)
+    if knife and knife:FindFirstChild("Stab") then
+        knife.Stab:FireServer("Slash")
+    end
 end
 
 Workspace.ChildRemoved:Connect(function(child)
@@ -708,7 +694,9 @@ Workspace.ChildRemoved:Connect(function(child)
     end
 end)
 
--- [[ BOTONES FLOTANTES MÓVILES ]]
+-- ==========================================================
+-- BOTONES FLOTANTES MÓVILES (DARK CRIMSON OLED HIGH-END)
+-- ==========================================================
 local function toggleGunButton(state)
     pcall(function()
         if gunButtonGui then gunButtonGui:Destroy(); gunButtonGui = nil end
@@ -724,13 +712,15 @@ local function toggleGunButton(state)
         Btn.Name = "BtnShoot"
         Btn.Size = UDim2.new(0, 160, 0, 45)
         Btn.Position = UDim2.new(0.5, -80, 0.35, 0)
-        Btn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+        Btn.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
+        Btn.BackgroundTransparency = 0.15
         Btn.Font = Enum.Font.GothamBold
         Btn.Text = "Shoot Murderer (Kinematic)"
-        Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        Btn.TextColor3 = Color3.fromRGB(245, 245, 245)
         Btn.TextSize = 11
         Btn.Active = true
         Btn.Draggable = true
+        Btn.AutoButtonColor = false
         Btn.Parent = gunButtonGui
 
         local Corner = Instance.new("UICorner")
@@ -739,8 +729,29 @@ local function toggleGunButton(state)
 
         local Stroke = Instance.new("UIStroke")
         Stroke.Thickness = 2
-        Stroke.Color = Color3.fromRGB(197, 0, 0)
+        Stroke.Color = Color3.fromRGB(180, 25, 35)
         Stroke.Parent = Btn
+
+        -- Animaciones táctiles de interacción fluida
+        local normalSize = UDim2.new(0, 160, 0, 45)
+        local pressedSize = UDim2.new(0, 152, 0, 42)
+        local tweenInfo = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+        Btn.MouseButton1Down:Connect(function()
+            TweenService:Create(Btn, tweenInfo, {Size = pressedSize, TextColor3 = Color3.fromRGB(255, 35, 45)}):Play()
+        end)
+
+        Btn.MouseButton1Up:Connect(function()
+            TweenService:Create(Btn, tweenInfo, {Size = normalSize, TextColor3 = Color3.fromRGB(245, 245, 245)}):Play()
+        end)
+
+        Btn.MouseEnter:Connect(function()
+            TweenService:Create(Btn, tweenInfo, {TextColor3 = Color3.fromRGB(255, 60, 70)}):Play()
+        end)
+
+        Btn.MouseLeave:Connect(function()
+            TweenService:Create(Btn, tweenInfo, {Size = normalSize, TextColor3 = Color3.fromRGB(245, 245, 245)}):Play()
+        end)
 
         Btn.MouseButton1Click:Connect(function()
             runShootActionNATIVE()
@@ -763,13 +774,15 @@ local function toggleKnifeButton(state)
         Btn.Name = "BtnKnife"
         Btn.Size = UDim2.new(0, 180, 0, 45)
         Btn.Position = UDim2.new(0.5, -90, 0.45, 0)
-        Btn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+        Btn.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
+        Btn.BackgroundTransparency = 0.15
         Btn.Font = Enum.Font.GothamBold
-        Btn.Text = "Throw Knife (Closest)"
-        Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        Btn.Text = "Throw Knife (Kinematic)"
+        Btn.TextColor3 = Color3.fromRGB(245, 245, 245)
         Btn.TextSize = 11
         Btn.Active = true
         Btn.Draggable = true
+        Btn.AutoButtonColor = false
         Btn.Parent = knifeButtonGui
 
         local Corner = Instance.new("UICorner")
@@ -778,16 +791,77 @@ local function toggleKnifeButton(state)
 
         local Stroke = Instance.new("UIStroke")
         Stroke.Thickness = 2
-        Stroke.Color = Color3.fromRGB(197, 0, 0)
+        Stroke.Color = Color3.fromRGB(180, 25, 35)
         Stroke.Parent = Btn
 
+        -- Animaciones táctiles de interacción fluida
+        local normalSize = UDim2.new(0, 180, 0, 45)
+        local pressedSize = UDim2.new(0, 171, 0, 42)
+        local tweenInfo = TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+        Btn.MouseButton1Down:Connect(function()
+            TweenService:Create(Btn, tweenInfo, {Size = pressedSize, TextColor3 = Color3.fromRGB(255, 35, 45)}):Play()
+        end)
+
+        Btn.MouseButton1Up:Connect(function()
+            TweenService:Create(Btn, tweenInfo, {Size = normalSize, TextColor3 = Color3.fromRGB(245, 245, 245)}):Play()
+        end)
+
+        Btn.MouseEnter:Connect(function()
+            TweenService:Create(Btn, tweenInfo, {TextColor3 = Color3.fromRGB(255, 60, 70)}):Play()
+        end)
+
+        Btn.MouseLeave:Connect(function()
+            TweenService:Create(Btn, tweenInfo, {Size = normalSize, TextColor3 = Color3.fromRGB(245, 245, 245)}):Play()
+        end)
+
         Btn.MouseButton1Click:Connect(function()
-            runKnifeThrowActionNATIVE()
+            pcall(function()
+                local char = LocalPlayer.Character
+                if not char then return end
+
+                local backpack = LocalPlayer:FindFirstChild("Backpack")
+                local knife = char:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
+                if not knife then return end
+
+                if knife.Parent == backpack then
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    if hum then hum:EquipTool(knife) end
+                    task.wait(0.05)
+                end
+
+                local target = findNearestPlayer()
+                if not target or not target.Character then return end
+
+                local myRoot = char:FindFirstChild("HumanoidRootPart")
+                local rightHand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm") or myRoot
+                if not myRoot or not rightHand then return end
+
+                local throwOrigin = rightHand.Position
+                local targetPredictedPos = getKinematicPredictedPosition(target, throwOrigin)
+                if not targetPredictedPos then return end
+
+                -- Transformación dinámica de elevación parabólica adaptada a la distancia
+                local targetDistance = (targetPredictedPos - throwOrigin).Magnitude
+                local dynamicElevationY = 1.0 + (targetDistance * 0.02)
+                local elevatedTargetPos = targetPredictedPos + Vector3.new(0, dynamicElevationY, 0)
+
+                -- Búsqueda estricta y aislada del remoto de lanzamiento a distancia
+                local throwRemote = knife:FindFirstChild("KnifeThrown") or knife:FindFirstChild("Throw")
+                if throwRemote then
+                    throwRemote:FireServer(
+                        CFrame.new(throwOrigin),
+                        CFrame.new(elevatedTargetPos)
+                    )
+                end
+            end)
         end)
     end
 end
 
--- [[ MOTOR ESP ]]
+-- ==========================================================
+-- MOTOR ESP
+-- ==========================================================
 local activeHighlights = {}
 local activeGunDropHighlight = nil
 local activeGunDropBillboard = nil
@@ -804,222 +878,207 @@ local weaponConnections = {}
 local espLoop = nil
 
 local function clearESP()
-    pcall(function()
-        for _, highlight in pairs(activeHighlights) do
-            if highlight then highlight:Destroy() end
-        end
-        table.clear(activeHighlights)
-        if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
-        if activeGunDropBillboard then activeGunDropBillboard:Destroy() activeGunDropBillboard = nil end
-        for _, h in pairs(activeTrapHighlights) do if h then h:Destroy() end end
-        table.clear(activeTrapHighlights)
-    end)
+    for _, highlight in pairs(activeHighlights) do
+        if highlight then highlight:Destroy() end
+    end
+    table.clear(activeHighlights)
+    if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
+    if activeGunDropBillboard then activeGunDropBillboard:Destroy() activeGunDropBillboard = nil end
+    for _, h in pairs(activeTrapHighlights) do if h then h:Destroy() end end
+    table.clear(activeTrapHighlights)
 end
 
 local function updateGunDropESP()
-    pcall(function()
-        if not espActive and not gunDropESPActive then
-            if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
-            if activeGunDropBillboard then activeGunDropBillboard:Destroy() activeGunDropBillboard = nil end
-            return
+    if not espActive and not gunDropESPActive then
+        if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
+        if activeGunDropBillboard then activeGunDropBillboard:Destroy() activeGunDropBillboard = nil end
+        return
+    end
+
+    local gd = Workspace:FindFirstChild("GunDrop", true)
+    if gd then
+        local targetAdornee = (gd:IsA("Model") and (gd.PrimaryPart or gd)) or gd
+        if not activeGunDropHighlight or not activeGunDropHighlight.Parent then
+            if activeGunDropHighlight then activeGunDropHighlight:Destroy() end
+            activeGunDropHighlight = Instance.new("Highlight")
+            activeGunDropHighlight.Name = "GunDrop_ESP"
+            activeGunDropHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            activeGunDropHighlight.FillTransparency = 0.5
+            activeGunDropHighlight.OutlineTransparency = 0
+            activeGunDropHighlight.OutlineColor = Color3.fromRGB(255, 255, 0)
+            activeGunDropHighlight.FillColor = Color3.fromRGB(255, 255, 0)
+            activeGunDropHighlight.Adornee = gd
+            activeGunDropHighlight.Parent = MobileTargetGui
         end
 
-        local gd = Workspace:FindFirstChild("GunDrop", true)
-        if gd then
-            local targetAdornee = (gd:IsA("Model") and (gd.PrimaryPart or gd)) or gd
-            if not activeGunDropHighlight or not activeGunDropHighlight.Parent then
-                if activeGunDropHighlight then activeGunDropHighlight:Destroy() end
-                activeGunDropHighlight = Instance.new("Highlight")
-                activeGunDropHighlight.Name = "GunDrop_ESP"
-                activeGunDropHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                activeGunDropHighlight.FillTransparency = 0.5
-                activeGunDropHighlight.OutlineTransparency = 0
-                activeGunDropHighlight.OutlineColor = Color3.fromRGB(255, 255, 0)
-                activeGunDropHighlight.FillColor = Color3.fromRGB(255, 255, 0)
-                activeGunDropHighlight.Adornee = gd
-                activeGunDropHighlight.Parent = MobileTargetGui
-            end
+        if not activeGunDropBillboard or not activeGunDropBillboard.Parent then
+            if activeGunDropBillboard then activeGunDropBillboard:Destroy() end
+            local bg = Instance.new("BillboardGui")
+            bg.Name = "GunDrop_Billboard"
+            bg.AlwaysOnTop = true
+            bg.Size = UDim2.new(0, 160, 0, 40)
+            bg.StudsOffset = Vector3.new(0, 2, 0)
+            bg.Adornee = targetAdornee
+            bg.Parent = MobileTargetGui
 
-            if not activeGunDropBillboard or not activeGunDropBillboard.Parent then
-                if activeGunDropBillboard then activeGunDropBillboard:Destroy() end
-                local bg = Instance.new("BillboardGui")
-                bg.Name = "GunDrop_Billboard"
-                bg.AlwaysOnTop = true
-                bg.Size = UDim2.new(0, 160, 0, 40)
-                bg.StudsOffset = Vector3.new(0, 2, 0)
-                bg.Adornee = targetAdornee
-                bg.Parent = MobileTargetGui
+            local lbl = Instance.new("TextLabel")
+            lbl.Size = UDim2.new(1, 0, 1, 0)
+            lbl.BackgroundTransparency = 1
+            lbl.Font = Enum.Font.GothamBold
+            lbl.Text = "DROPPED GUN"
+            lbl.TextColor3 = Color3.fromRGB(255, 255, 0)
+            lbl.TextSize = 14
+            lbl.Parent = bg
 
-                local lbl = Instance.new("TextLabel")
-                lbl.Size = UDim2.new(1, 0, 1, 0)
-                lbl.BackgroundTransparency = 1
-                lbl.Font = Enum.Font.GothamBold
-                lbl.Text = "DROPPED GUN"
-                lbl.TextColor3 = Color3.fromRGB(255, 255, 0)
-                lbl.TextSize = 14
-                lbl.Parent = bg
+            local stroke = Instance.new("UIStroke")
+            stroke.Thickness = 2
+            stroke.Color = Color3.fromRGB(0, 0, 0)
+            stroke.Parent = lbl
 
-                local stroke = Instance.new("UIStroke")
-                stroke.Thickness = 2
-                stroke.Color = Color3.fromRGB(0, 0, 0)
-                stroke.Parent = lbl
-
-                activeGunDropBillboard = bg
-            end
-        else
-            if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
-            if activeGunDropBillboard then activeGunDropBillboard:Destroy() activeGunDropBillboard = nil end
+            activeGunDropBillboard = bg
         end
-    end)
+    else
+        if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
+        if activeGunDropBillboard then activeGunDropBillboard:Destroy() activeGunDropBillboard = nil end
+    end
 end
 
 local function updateTrapsESP()
-    pcall(function()
-        for _, v in ipairs(Workspace:GetDescendants()) do
-            if v.Name == "Trap" and v.Parent and v.Parent:IsA("Folder") then
-                v.Transparency = 0
-                if not activeTrapHighlights[v] or not activeTrapHighlights[v].Parent then
-                    local hl = Instance.new("Highlight")
-                    hl.Name = "Trap_ESP"
-                    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                    hl.FillTransparency = 0.5
-                    hl.OutlineTransparency = 0
-                    hl.OutlineColor = Color3.fromRGB(255, 0, 0)
-                    hl.FillColor = Color3.fromRGB(255, 0, 0)
-                    hl.Adornee = v
-                    hl.Parent = MobileTargetGui
-                    activeTrapHighlights[v] = hl
-                end
+    for _, v in ipairs(Workspace:GetDescendants()) do
+        if v.Name == "Trap" and v.Parent and v.Parent:IsA("Folder") then
+            v.Transparency = 0
+            if not activeTrapHighlights[v] or not activeTrapHighlights[v].Parent then
+                local hl = Instance.new("Highlight")
+                hl.Name = "Trap_ESP"
+                hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                hl.FillTransparency = 0.5
+                hl.OutlineTransparency = 0
+                hl.OutlineColor = Color3.fromRGB(255, 0, 0)
+                hl.FillColor = Color3.fromRGB(255, 0, 0)
+                hl.Adornee = v
+                hl.Parent = MobileTargetGui
+                activeTrapHighlights[v] = hl
             end
         end
-        for trap, hl in pairs(activeTrapHighlights) do
-            if not trap or not trap.Parent then
-                if hl then hl:Destroy() end
-                activeTrapHighlights[trap] = nil
-            end
+    end
+    for trap, hl in pairs(activeTrapHighlights) do
+        if not trap or not trap.Parent then
+            if hl then hl:Destroy() end
+            activeTrapHighlights[trap] = nil
         end
-    end)
+    end
 end
 
 local function applyHighlightToCharacter(player, character)
-    pcall(function()
-        if not espActive or not character then return end
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        local backpack = player:FindFirstChild("Backpack")
-        
-        local hl = activeHighlights[character]
-        if not hl or not hl.Parent then
-            if hl then hl:Destroy() end
-            hl = Instance.new("Highlight")
-            hl.Name, hl.DepthMode, hl.FillTransparency, hl.OutlineTransparency, hl.Adornee, hl.Parent = "Mobile_ESP", Enum.HighlightDepthMode.AlwaysOnTop, 1, 0, character, MobileTargetGui
-            activeHighlights[character] = hl
-        end
+    if not espActive or not character then return end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local backpack = player:FindFirstChild("Backpack")
+    
+    local hl = activeHighlights[character]
+    if not hl or not hl.Parent then
+        if hl then hl:Destroy() end
+        hl = Instance.new("Highlight")
+        hl.Name, hl.DepthMode, hl.FillTransparency, hl.OutlineTransparency, hl.Adornee, hl.Parent = "Mobile_ESP", Enum.HighlightDepthMode.AlwaysOnTop, 1, 0, character, MobileTargetGui
+        activeHighlights[character] = hl
+    end
 
-        if humanoid and humanoid.Health <= 0 then
-            hl.OutlineColor = Color3.fromRGB(0, 255, 8)
-            hl.Enabled = true
-            return
-        end
-
-        local murderer = findMurderer()
-        local sheriff = findSheriff()
-        local isMurderer = (player == murderer)
-        local isSheriff = (player == sheriff)
-        local hasGun = (backpack and backpack:FindFirstChild("Gun")) or character:FindFirstChild("Gun") ~= nil
-        local isHero = hasGun and not isSheriff
-
-        if ignoreInnocents and not isMurderer and not isSheriff and not isHero and not hasGun then
-            if activeHighlights[character] then activeHighlights[character]:Destroy() activeHighlights[character] = nil end
-            return
-        end
-
-        local targetColor = Color3.fromRGB(0, 255, 8)
-        if isMurderer then
-            targetColor = Color3.fromRGB(255, 0, 4)
-        elseif (isSheriff or isHero or hasGun) then
-            targetColor = Color3.fromRGB(0, 150, 255)
-        end
-
-        if hl.OutlineColor ~= targetColor then hl.OutlineColor = targetColor end
+    if humanoid and humanoid.Health <= 0 then
+        hl.OutlineColor = Color3.fromRGB(0, 255, 8)
         hl.Enabled = true
-    end)
+        return
+    end
+
+    local murderer = findMurderer()
+    local sheriff = findSheriff()
+    local isMurderer = (player == murderer)
+    local isSheriff = (player == sheriff)
+    local hasGun = (backpack and backpack:FindFirstChild("Gun")) or character:FindFirstChild("Gun") ~= nil
+    local isHero = hasGun and not isSheriff
+
+    if ignoreInnocents and not isMurderer and not isSheriff and not isHero and not hasGun then
+        if activeHighlights[character] then activeHighlights[character]:Destroy() activeHighlights[character] = nil end
+        return
+    end
+
+    local targetColor = Color3.fromRGB(0, 255, 8)
+    if isMurderer then
+        targetColor = Color3.fromRGB(255, 0, 4)
+    elseif (isSheriff or isHero or hasGun) then
+        targetColor = Color3.fromRGB(0, 150, 255)
+    end
+
+    if hl.OutlineColor ~= targetColor then hl.OutlineColor = targetColor end
+    hl.Enabled = true
 end
 
 local function reloadESP()
-    pcall(function()
-        if not espActive then 
-            clearESP()
-            updateGunDropESP()
-            updateTrapsESP()
-            return 
-        end
-        for _, player in ipairs(Players:GetPlayers()) do
-            if player.Character then
-                applyHighlightToCharacter(player, player.Character)
-            end
-        end
+    if not espActive then 
+        clearESP()
         updateGunDropESP()
         updateTrapsESP()
-    end)
+        return 
+    end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character then
+            applyHighlightToCharacter(player, player.Character)
+        end
+    end
+    updateGunDropESP()
+    updateTrapsESP()
 end
 
 local function monitorPlayerWeapons(player)
-    pcall(function()
-        local function onCharacter(character)
-            if not character then return end
-            applyHighlightToCharacter(player, character)
-            
-            local childAdded = character.ChildAdded:Connect(function(child)
-                if child:IsA("Tool") and (child.Name == "Gun" or child.Name == "Knife") then
-                    applyHighlightToCharacter(player, character)
-                end
-            end)
-            local childRemoved = character.ChildRemoved:Connect(function(child)
-                if child:IsA("Tool") and (child.Name == "Gun" or child.Name == "Knife") then
-                    applyHighlightToCharacter(player, character)
-                end
-            end)
-            table.insert(weaponConnections, childAdded)
-            table.insert(weaponConnections, childRemoved)
-        end
+    local function onCharacter(character)
+        if not character then return end
+        applyHighlightToCharacter(player, character)
         
-        local charAdded = player.CharacterAdded:Connect(onCharacter)
-        table.insert(weaponConnections, charAdded)
-        if player.Character then
-            task.spawn(onCharacter, player.Character)
-        end
-        
-        task.spawn(function()
-            local backpack = player:WaitForChild("Backpack", 5)
-            if backpack then
-                local bpAdded = backpack.ChildAdded:Connect(function(child)
-                    if child:IsA("Tool") and (child.Name == "Gun" or child.Name == "Knife") then
-                        reloadESP()
-                    end
-                end)
-                local bpRemoved = backpack.ChildRemoved:Connect(function(child)
-                    if child:IsA("Tool") and (child.Name == "Gun" or child.Name == "Knife") then
-                        reloadESP()
-                    end
-                end)
-                table.insert(weaponConnections, bpAdded)
-                table.insert(weaponConnections, bpRemoved)
+        local childAdded = character.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") and (child.Name == "Gun" or child.Name == "Knife") then
+                applyHighlightToCharacter(player, character)
             end
         end)
+        local childRemoved = character.ChildRemoved:Connect(function(child)
+            if child:IsA("Tool") and (child.Name == "Gun" or child.Name == "Knife") then
+                applyHighlightToCharacter(player, character)
+            end
+        end)
+        table.insert(weaponConnections, childAdded)
+        table.insert(weaponConnections, childRemoved)
+    end
+    
+    local charAdded = player.CharacterAdded:Connect(onCharacter)
+    table.insert(weaponConnections, charAdded)
+    if player.Character then
+        task.spawn(onCharacter, player.Character)
+    end
+    
+    task.spawn(function()
+        local backpack = player:WaitForChild("Backpack", 5)
+        if backpack then
+            local bpAdded = backpack.ChildAdded:Connect(function(child)
+                if child:IsA("Tool") and (child.Name == "Gun" or child.Name == "Knife") then
+                    reloadESP()
+                end
+            end)
+            local bpRemoved = backpack.ChildRemoved:Connect(function(child)
+                if child:IsA("Tool") and (child.Name == "Gun" or child.Name == "Knife") then
+                    reloadESP()
+                end
+            end)
+            table.insert(weaponConnections, bpAdded)
+            table.insert(weaponConnections, bpRemoved)
+        end
     end)
 end
 
 local function startESP()
     espActive = true
-    pcall(function()
-        local globalRemotes = ReplicatedStorage:FindFirstChild("Remotes")
-        if globalRemotes and globalRemotes:FindFirstChild("Gameplay") and globalRemotes.Gameplay:FindFirstChild("PlayerDataChanged") then
-            databaseConnectionESP = globalRemotes.Gameplay.PlayerDataChanged.OnClientEvent:Connect(function(data)
-                playerDataESP = data
-                reloadESP()
-            end)
-        end
-    end)
+    if globalRemotes and globalRemotes:FindFirstChild("Gameplay") and globalRemotes.Gameplay:FindFirstChild("PlayerDataChanged") then
+        databaseConnectionESP = globalRemotes.Gameplay.PlayerDataChanged.OnClientEvent:Connect(function(data)
+            playerDataESP = data
+            reloadESP()
+        end)
+    end
 
     local function setupPlayerESP(player)
         if player.Character then
@@ -1127,9 +1186,26 @@ local Window = Rayfield:CreateWindow({
     LoadingSubtitle = "Kinematic Ballistics & Silent Aim",
     Theme = "DarkCrimson",
     DisableRayfieldPrompts = true,
-    ConfigurationSaving = { Enabled = false },
+    ConfigurationSaving = {
+        Enabled = false
+    },
     Discord = { Enabled = false }
 })
+
+task.spawn(function()
+    task.wait(1)
+    pcall(function()
+        if Window and Window.Keybind then Window.Keybind:Destroy() end
+        if Window.Main and Window.Main:FindFirstChild("Topbar") then
+            local topbar = Window.Main.Topbar
+            for _, child in ipairs(topbar:GetChildren()) do
+                if child.Name == "Search" or child.Name == "SearchButton" or child.Name == "Max" or child.Name == "Maximize" or child.Name == "Minimize" or child.Name == "Hide" then
+                    child:Destroy()
+                end
+            end
+        end
+    end)
+end)
 
 local MainTab      = Window:CreateTab("Main", "swords")
 local ESPTab       = Window:CreateTab("ESP", "eye")
@@ -1148,7 +1224,9 @@ MainTab:CreateToggle({
     Info = "Redirige automáticamente el disparo de tu pistola al asesino sin mover tu cámara.",
     CurrentValue = true,
     Flag = "SilentAimFlag",
-    Callback = function(Value) silentAimEnabled = Value end,
+    Callback = function(Value)
+        silentAimEnabled = Value
+    end,
 })
 
 MainTab:CreateToggle({
@@ -1156,7 +1234,9 @@ MainTab:CreateToggle({
     Info = "Solo redirige la bala si disparas en dirección general al asesino.",
     CurrentValue = false,
     Flag = "SilentAimFOVToggle",
-    Callback = function(Value) useFOVCheck = Value end,
+    Callback = function(Value)
+        useFOVCheck = Value
+    end,
 })
 
 MainTab:CreateSlider({
@@ -1164,13 +1244,16 @@ MainTab:CreateSlider({
     Range = {50, 600},
     Increment = 10,
     Suffix = " px",
-    CurrentValue = 220,
+    CurrentValue = 200,
     Flag = "SilentAimFOVSlider",
-    Callback = function(Value) silentAimFOV = Value end,
+    Callback = function(Value)
+        silentAimFOV = Value
+    end,
 })
 
 MainTab:CreateSection("blatant module")
 
+-- AUTO-PICKUP
 task.spawn(function() 
     while task.wait(0.05) do 
         pcall(function() 
@@ -1186,7 +1269,9 @@ task.spawn(function()
                         local layCFrame = targetPivot * CFrame.Angles(math.rad(90), 0, 0)
                         hrp.AssemblyLinearVelocity = Vector3.zero
                         hrp.CFrame = layCFrame + Vector3.new(0, 0.5, 0)
+                        
                         task.wait(0.08)
+                        
                         hrp.CFrame = oldCFrame
                         hrp.AssemblyLinearVelocity = Vector3.zero
                         hrp.AssemblyAngularVelocity = Vector3.zero
@@ -1209,7 +1294,7 @@ MainTab:CreateToggle({
 
 MainTab:CreateToggle({
     Name = "Gun Button",
-    Info = "Botón flotante para disparar al Murderer.",
+    Info = "Botón flotante con predicción balística cinemática.",
     CurrentValue = false,
     Flag = "GunButtonFlag",
     Callback = function(Value) toggleGunButton(Value) end,
@@ -1217,7 +1302,7 @@ MainTab:CreateToggle({
 
 MainTab:CreateToggle({
     Name = "Knife Button",
-    Info = "Botón flotante que equipa y lanza el cuchillo al jugador más cercano.",
+    Info = "Activa el botón flotante del cuchillo.",
     CurrentValue = false,
     Flag = "KnifeButtonFlag",
     Callback = function(Value) toggleKnifeButton(Value) end,
@@ -1273,7 +1358,9 @@ MainTab:CreateToggle({
 
 MainTab:CreateButton({
     Name = "Manual Shoot (Kinematic)",
-    Callback = function() runShootActionNATIVE() end,
+    Callback = function()
+        runShootActionNATIVE()
+    end,
 })
 
 -- ==========================================================
@@ -1497,6 +1584,7 @@ UniversalTab:CreateButton({
     end,
 })
 
+-- ESCANEO DE TRAMPAS Y ANTI-FLING
 task.spawn(function()
     while task.wait(0.3) do
         pcall(function()
@@ -1615,6 +1703,7 @@ PlayerTab:CreateToggle({
     end,
 })
 
+-- HITBOX EXPANDER
 PlayerTab:CreateSection("hitbox expander")
 
 PlayerTab:CreateToggle({
@@ -1742,7 +1831,7 @@ SettingsTab:CreateButton({
 
 Rayfield:Notify({
     Title = "Crimson Blade",
-    Content = "Kinematic Ballistics & Silent Aim cargado con éxito.",
+    Content = "Kinematic Ballistics Engine cargado con éxito.",
     Duration = 4,
     Image = 10843394625
 })
