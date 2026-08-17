@@ -1,6 +1,6 @@
 -- ==========================================================
---  CRIMSON BLADE - HIGH-END EXECUTIVE MM2 SUITE
---  Engineered Precision | Vectorial Ballistics & Anti-Fling
+--  CRIMSON BLADE - HIGH-END MM2 & UNIVERSAL SUITE (OPTIMIZED)
+--  Kinematic Ballistic Engine + True Silent Aim & Auto-Knife
 -- ==========================================================
 
 local Players = game:GetService("Players")
@@ -16,77 +16,43 @@ local TextChatService = game:GetService("TextChatService")
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
--- [[ CONTENEDORES DE ESTADO Y RED ]]
+-- [[ CONSTANTES BALÍSTICAS MM2 ]]
+local BULLET_SPEED = 1000 -- Velocidad de bala (studs/s)
+local KNIFE_SPEED = 220   -- Velocidad de lanzamiento de cuchillo (studs/s)
+
+-- [[ CONTENEDORES DE DATOS GLOBALES ]]
 local playerDataESP = {}
 local gamePlayerData = {}
 getgenv().targetPlayerInputText = ""
 
--- Calibración Balística de 3 Ejes (YARHM Core Algorithm)
-local shootOffset = 2.8
-local offsetToPingMult = 1.0
-local instakillshoot = false
+-- [[ ESTADOS SILENT AIM ]]
+local silentAimEnabled = true
+local silentAimFOV = 220
+local useFOVCheck = false
 
-local aimbotEnabled = false
-local aimbotConn = nil
 local autoShootMurderer = false
-local killAuraEnabled = false
-local killAuraConn = nil
+local killClosestEnabled = false
 local antiFlingActive = false
 local antiFlingLastPos = Vector3.zero
-local autoPickupEnabled = false
-local targetSpeed = 16
 
 local hitboxEnabled = false
 local hitboxSizeValue = 8
 
 local cachedMurderer = nil
-
--- Referencias de Interfaz Móvil Flotante
 local gunButtonGui = nil
 local knifeButtonGui = nil
-local aimbotButtonGui = nil
-local aimbotBtnInstance = nil
-
--- Variables de Movimiento / Vuelo / Noclip
-local airWalkEnabled = false
-local airWalkPlatform = nil
-local noclipConnection = nil
-local airWalkConnection = nil
-local currentAirWalkHeight = 0
-
-local isFlying = false
-local flyMaxSpeed = 50
-local flyAcceleration = 2
-local currentFlySpeed = 0
-local flyDirection = Vector3.zero
-local flyBodyGyro = nil
-local flyBodyVel = nil
-local flyConnection = nil
-
--- Variables de ESP Visual
-local activeHighlights = {}
-local activeGunDropHighlight = nil
-local activeGunDropBillboard = nil
-local activeTrapHighlights = {}
-local espActive = false
-local ignoreInnocents = false
-local gunDropESPActive = false
-local trapESPActive = false
-local databaseConnectionESP = nil
-local playerAddedConnectionESP = nil
-local weaponConnections = {}
-local espLoop = nil
 
 local MobileTargetGui = nil
-if gethui then
-    MobileTargetGui = gethui()
-else
-    MobileTargetGui = game:GetService("CoreGui")
-end
+pcall(function()
+    if gethui then
+        MobileTargetGui = gethui()
+    else
+        MobileTargetGui = game:GetService("CoreGui")
+    end
+end)
+if not MobileTargetGui then MobileTargetGui = LocalPlayer:WaitForChild("PlayerGui") end
 
--- ==========================================================
--- BUSCADOR PROFUNDO DE ROLES (INSPECCIÓN INTEGRAL)
--- ==========================================================
+-- [[ BUSCADORES DE ROLES ]]
 local function getPlayerByName(list)
     if list == nil or list == "" then return nil end
     local broken = {}
@@ -103,9 +69,9 @@ local function getPlayerByName(list)
 end
 
 local function findMurderer()
-    if gamePlayerData then
-        for player, data in pairs(gamePlayerData) do
-            if (data.Role == "Murderer" or data.Role == "Murder") and Players:FindFirstChild(player) then
+    if playerDataESP then
+        for player, data in pairs(playerDataESP) do
+            if data.Role == "Murderer" and Players:FindFirstChild(player) then
                 local p = Players:FindFirstChild(player)
                 if p and p.Character and p.Character:FindFirstChild("Humanoid") and p.Character.Humanoid.Health > 0 then
                     return p
@@ -113,9 +79,9 @@ local function findMurderer()
             end
         end
     end
-    if playerDataESP then
-        for player, data in pairs(playerDataESP) do
-            if (data.Role == "Murderer" or data.Role == "Murder") and Players:FindFirstChild(player) then
+    if gamePlayerData then
+        for player, data in pairs(gamePlayerData) do
+            if data.Role == "Murderer" and Players:FindFirstChild(player) then
                 local p = Players:FindFirstChild(player)
                 if p and p.Character and p.Character:FindFirstChild("Humanoid") and p.Character.Humanoid.Health > 0 then
                     return p
@@ -125,11 +91,8 @@ local function findMurderer()
     end
     for _, player in ipairs(Players:GetPlayers()) do
         if player.Character and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0 then
-            local bp = player:FindFirstChild("Backpack")
-            local char = player.Character
-            if (bp and (bp:FindFirstChild("Knife") or bp:FindFirstChild("Stab", true))) or 
-               (char:FindFirstChild("Knife") or char:FindFirstChild("Stab", true)) then
-                return player
+            if (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("Knife")) or player.Character:FindFirstChild("Knife") then 
+                return player 
             end
         end
     end
@@ -139,10 +102,8 @@ end
 local function findSheriff()
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0 then
-            local bp = player:FindFirstChild("Backpack")
-            local char = player.Character
-            if (bp and (bp:FindFirstChild("Gun") or bp:FindFirstChild("Shoot", true))) or 
-               (char:FindFirstChild("Gun") or char:FindFirstChild("Shoot", true)) then
+            local backpack = player:FindFirstChild("Backpack")
+            if (backpack and backpack:FindFirstChild("Gun")) or player.Character:FindFirstChild("Gun") then
                 return player
             end
         end
@@ -155,24 +116,41 @@ local function findSheriff()
             end
         end
     end
+    if gamePlayerData then
+        for player, data in pairs(gamePlayerData) do
+            if (data.Role == "Sheriff" or data.Role == "Hero") and Players:FindFirstChild(player) then
+                local p = Players:FindFirstChild(player)
+                if p and p.Character and p.Character:FindFirstChild("Humanoid") and p.Character.Humanoid.Health > 0 then return p end
+            end
+        end
+    end
     return nil
 end
 
-local function findNearestPlayer(filterMurderer)
+local function findSheriffNotMe()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0 then
+            local backpack = player:FindFirstChild("Backpack")
+            if (backpack and backpack:FindFirstChild("Gun")) or player.Character:FindFirstChild("Gun") then
+                return player
+            end
+        end
+    end
+    return nil
+end
+
+local function findNearestPlayer()
     local nearestPlayer = nil
     local shortestDistance = math.huge
-    local m = findMurderer()
     for _, player in ipairs(Players:GetPlayers()) do
         if player ~= LocalPlayer and player.Character and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then 
-            if not filterMurderer or (player ~= m) then
-                local otherRootPart = player.Character:FindFirstChild("HumanoidRootPart")
-                local otherHum = player.Character:FindFirstChildOfClass("Humanoid")
-                if otherRootPart and otherHum and otherHum.Health > 0 then
-                    local distance = (LocalPlayer.Character.HumanoidRootPart.Position - otherRootPart.Position).Magnitude
-                    if distance < shortestDistance then
-                        shortestDistance = distance
-                        nearestPlayer = player
-                    end
+            local otherRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+            local otherHum = player.Character:FindFirstChildOfClass("Humanoid")
+            if otherRootPart and otherHum and otherHum.Health > 0 then
+                local distance = (LocalPlayer.Character.HumanoidRootPart.Position - otherRootPart.Position).Magnitude
+                if distance < shortestDistance then
+                    shortestDistance = distance
+                    nearestPlayer = player
                 end
             end
         end
@@ -189,10 +167,10 @@ local function getMap()
     return nil
 end
 
+-- [[ RESTAURADORES DE ESTADO ]]
 local function resetRoundCombatStates()
+    killClosestEnabled = false
     autoShootMurderer = false
-    killAuraEnabled = false
-    if killAuraConn then killAuraConn:Disconnect() killAuraConn = nil end
     for _, p in ipairs(Players:GetPlayers()) do
         if p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
             p.Character.HumanoidRootPart.Anchored = false
@@ -211,438 +189,7 @@ local function restoreOriginalHitboxes()
     end 
 end
 
--- ==========================================================
--- ALGORITMO BALÍSTICO VECTORIAL DE 3 EJES (YARHM REFINED)
--- ==========================================================
-local function getPredictedPositionVectorial(targetPlayer, sOffset)
-    if not targetPlayer or not targetPlayer.Character then return Vector3.zero end
-    local char = targetPlayer.Character
-    local targetHRP = char:FindFirstChild("UpperTorso") or char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
-    local targetHum = char:FindFirstChildOfClass("Humanoid")
-    if not targetHRP or not targetHum or targetHum.Health <= 0 then return Vector3.zero end
-
-    local currentPos = targetHRP.Position
-    local velocity = targetHRP.AssemblyLinearVelocity
-    local moveDir = targetHum.MoveDirection
-    local ping = LocalPlayer:GetNetworkPing() * 1000
-
-    -- Cálculo Tridimensional de Intercepción
-    local predictedPosition = currentPos + ((velocity * Vector3.new(0.75, 0.5, 0.75))) * (sOffset / 15) + (moveDir * sOffset)
-    predictedPosition = predictedPosition * (((ping * 0.001) * ((offsetToPingMult - 1) * 0.01)) + 1)
-
-    return predictedPosition
-end
-
--- [[ SISTEMA DE DISPARO NATIVO (SILENT AIM AL ASESINO) ]]
-local lastShotTick = 0
-local function runShootActionNATIVE()
-    if tick() - lastShotTick < 0.18 then return end
-    lastShotTick = tick()
-
-    local murderer = cachedMurderer or findMurderer()
-    if not murderer or not murderer.Character then return end
-
-    if not LocalPlayer.Character:FindFirstChild("Gun") then
-        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Gun") and hum then 
-            hum:EquipTool(LocalPlayer.Backpack.Gun) 
-            task.wait(0.04)
-        else 
-            return 
-        end
-    end
-
-    local murdererHRP = murderer.Character:FindFirstChild("HumanoidRootPart") or murderer.Character:FindFirstChild("UpperTorso") or murderer.Character:FindFirstChild("Torso")
-    if not murdererHRP then return end
-
-    local predictedPosition = getPredictedPositionVectorial(murderer, shootOffset)
-    local myHand = LocalPlayer.Character:FindFirstChild("RightHand") or LocalPlayer.Character:FindFirstChild("Right Arm") or LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    local originPos = myHand and myHand.Position or Camera.CFrame.Position
-
-    local args = instakillshoot and {
-        CFrame.new(murdererHRP.Position + Vector3.new(0, 1, 0)),
-        CFrame.new(murdererHRP.Position)
-    } or {
-        CFrame.new(originPos),
-        CFrame.new(predictedPosition)
-    }
-
-    local gun = LocalPlayer.Character:FindFirstChild("Gun")
-    if gun and gun:FindFirstChild("Shoot") then
-        pcall(function()
-            gun.Shoot:FireServer(unpack(args))
-        end)
-    end
-end
-
--- [[ LANZAMIENTO Y ACUCHILLADO AUTOMÁTICO DE CUCHILLO ]]
-local lastKnifeTick = 0
-local function runKnifeThrowActionNATIVE()
-    if tick() - lastKnifeTick < 0.25 then return end
-    lastKnifeTick = tick()
-
-    local target = findNearestPlayer(false)
-    if not target or not target.Character then return end
-
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-
-    if not char:FindFirstChild("Knife") then
-        if LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Knife") and hum then
-            hum:EquipTool(LocalPlayer.Backpack.Knife)
-            task.wait(0.04)
-        else
-            return
-        end
-    end
-
-    local knife = char:FindFirstChild("Knife")
-    if not knife then return end
-
-    local myHRP = char:FindFirstChild("HumanoidRootPart")
-    local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
-    local dist = myHRP and tHRP and (myHRP.Position - tHRP.Position).Magnitude or 100
-    local originPos = Camera.CFrame.Position
-    local predictedPosition = getPredictedPositionVectorial(target, shootOffset + 1)
-
-    pcall(function()
-        if dist <= 7.5 and knife:FindFirstChild("Stab") then
-            knife.Stab:FireServer("Slash")
-        elseif knife:FindFirstChild("KnifeThrown", true) then
-            knife.KnifeThrown:FireServer(CFrame.new(originPos), CFrame.new(predictedPosition))
-        elseif knife:FindFirstChild("Throw") then
-            knife.Throw:FireServer(CFrame.new(originPos, predictedPosition))
-        elseif knife:FindFirstChild("Stab") then
-            knife.Stab:FireServer("Slash")
-        end
-    end)
-end
-
--- ==========================================================
--- SHIFT-LOCK DE CÁMARA: FIJO ESTRICTAMENTE AL TORSO DEL ASESINO
--- ==========================================================
-aimbotConn = RunService.RenderStepped:Connect(function() 
-    if aimbotEnabled then 
-        local murderer = cachedMurderer or findMurderer()
-        if murderer and murderer.Character then 
-            local hrp = murderer.Character:FindFirstChild("UpperTorso") or murderer.Character:FindFirstChild("HumanoidRootPart") or murderer.Character:FindFirstChild("Torso")
-            local hum = murderer.Character:FindFirstChildOfClass("Humanoid")
-            if hrp and hum and hum.Health > 0 then 
-                Camera.CFrame = CFrame.new(Camera.CFrame.Position, hrp.Position)
-            end
-        end 
-    end 
-end)
-
--- [[ DISPARO AL TOCAR LA PANTALLA EN MÓVIL ]]
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Gun") and aimbotEnabled then
-            runShootActionNATIVE()
-        end
-    end
-end)
-
-local function attachGunActivation(tool)
-    if tool:IsA("Tool") and tool.Name == "Gun" then
-        tool.Activated:Connect(function()
-            if aimbotEnabled then
-                runShootActionNATIVE()
-            end
-        end)
-    end
-end
-
-if LocalPlayer.Character then
-    for _, t in ipairs(LocalPlayer.Character:GetChildren()) do attachGunActivation(t) end
-    LocalPlayer.Character.ChildAdded:Connect(attachGunActivation)
-end
-LocalPlayer.CharacterAdded:Connect(function(char)
-    char.ChildAdded:Connect(attachGunActivation)
-end)
-
--- ==========================================================
--- BOTONES FLOTANTES MÓVILES (DRAGGABLE & RESPONSIVE)
--- ==========================================================
-local function updateAimbotButtonVisual()
-    if aimbotBtnInstance then
-        if aimbotEnabled then
-            aimbotBtnInstance.Text = "Target Lock: ACTIVE"
-            aimbotBtnInstance.TextColor3 = Color3.fromRGB(0, 255, 120)
-            local stroke = aimbotBtnInstance:FindFirstChildOfClass("UIStroke")
-            if stroke then stroke.Color = Color3.fromRGB(0, 255, 120) end
-        else
-            aimbotBtnInstance.Text = "Target Lock: STANDBY"
-            aimbotBtnInstance.TextColor3 = Color3.fromRGB(255, 80, 80)
-            local stroke = aimbotBtnInstance:FindFirstChildOfClass("UIStroke")
-            if stroke then stroke.Color = Color3.fromRGB(197, 0, 0) end
-        end
-    end
-end
-
-local function toggleAimbotButton(state)
-    pcall(function()
-        if aimbotButtonGui then aimbotButtonGui:Destroy(); aimbotButtonGui = nil end
-        aimbotBtnInstance = nil
-    end)
-
-    if state then
-        aimbotButtonGui = Instance.new("ScreenGui")
-        aimbotButtonGui.Name = "Executive_Aimbot_Btn"
-        aimbotButtonGui.ResetOnSpawn = false
-        aimbotButtonGui.Parent = MobileTargetGui
-
-        local Btn = Instance.new("TextButton")
-        Btn.Name = "BtnAimbot"
-        Btn.Size = UDim2.new(0, 150, 0, 42)
-        Btn.Position = UDim2.new(0.5, -75, 0.25, 0)
-        Btn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-        Btn.Font = Enum.Font.GothamBold
-        Btn.TextSize = 11
-        Btn.Active = true
-        Btn.Draggable = true
-        Btn.Parent = aimbotButtonGui
-
-        local Corner = Instance.new("UICorner")
-        Corner.CornerRadius = UDim.new(0, 8)
-        Corner.Parent = Btn
-
-        local Stroke = Instance.new("UIStroke")
-        Stroke.Thickness = 2
-        Stroke.Color = Color3.fromRGB(197, 0, 0)
-        Stroke.Parent = Btn
-
-        aimbotBtnInstance = Btn
-        updateAimbotButtonVisual()
-
-        Btn.MouseButton1Click:Connect(function()
-            aimbotEnabled = not aimbotEnabled
-            updateAimbotButtonVisual()
-        end)
-    end
-end
-
-local function toggleGunButton(state)
-    pcall(function()
-        if gunButtonGui then gunButtonGui:Destroy(); gunButtonGui = nil end
-    end)
-    
-    if state then
-        gunButtonGui = Instance.new("ScreenGui")
-        gunButtonGui.Name = "Executive_Gun_Btn"
-        gunButtonGui.ResetOnSpawn = false
-        gunButtonGui.Parent = MobileTargetGui
-
-        local Btn = Instance.new("TextButton")
-        Btn.Name = "BtnShoot"
-        Btn.Size = UDim2.new(0, 160, 0, 42)
-        Btn.Position = UDim2.new(0.5, -80, 0.35, 0)
-        Btn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-        Btn.Font = Enum.Font.GothamBold
-        Btn.Text = "Shoot into Murderer"
-        Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        Btn.TextSize = 11
-        Btn.Active = true
-        Btn.Draggable = true
-        Btn.Parent = gunButtonGui
-
-        local Corner = Instance.new("UICorner")
-        Corner.CornerRadius = UDim.new(0, 8)
-        Corner.Parent = Btn
-
-        local Stroke = Instance.new("UIStroke")
-        Stroke.Thickness = 2
-        Stroke.Color = Color3.fromRGB(197, 0, 0)
-        Stroke.Parent = Btn
-
-        Btn.MouseButton1Click:Connect(function()
-            runShootActionNATIVE()
-        end)
-    end
-end
-
-local function toggleKnifeButton(state)
-    pcall(function()
-        if knifeButtonGui then knifeButtonGui:Destroy(); knifeButtonGui = nil end
-    end)
-    
-    if state then
-        knifeButtonGui = Instance.new("ScreenGui")
-        knifeButtonGui.Name = "Executive_Knife_Btn"
-        knifeButtonGui.ResetOnSpawn = false
-        knifeButtonGui.Parent = MobileTargetGui
-
-        local Btn = Instance.new("TextButton")
-        Btn.Name = "BtnKnife"
-        Btn.Size = UDim2.new(0, 170, 0, 42)
-        Btn.Position = UDim2.new(0.5, -85, 0.45, 0)
-        Btn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
-        Btn.Font = Enum.Font.GothamBold
-        Btn.Text = "Knife Throw to Closest"
-        Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        Btn.TextSize = 11
-        Btn.Active = true
-        Btn.Draggable = true
-        Btn.Parent = knifeButtonGui
-
-        local Corner = Instance.new("UICorner")
-        Corner.CornerRadius = UDim.new(0, 8)
-        Corner.Parent = Btn
-
-        local Stroke = Instance.new("UIStroke")
-        Stroke.Thickness = 2
-        Stroke.Color = Color3.fromRGB(197, 0, 0)
-        Stroke.Parent = Btn
-
-        Btn.MouseButton1Click:Connect(function()
-            runKnifeThrowActionNATIVE()
-        end)
-    end
-end
-
--- ==========================================================
--- BUCLES DE COMBATE, KILL AURA Y AUTO-PICKUP
--- ==========================================================
-task.spawn(function() 
-    while task.wait(0.05) do 
-        pcall(function() 
-            if autoPickupEnabled then
-                local gd = Workspace:FindFirstChild("GunDrop", true) 
-                if gd and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then 
-                    local hrp = LocalPlayer.Character.HumanoidRootPart
-                    local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-                    local oldCFrame = hrp.CFrame
-                    local targetPivot = gd:IsA("Model") and (gd.PrimaryPart and gd.PrimaryPart.CFrame or gd:GetPivot()) or gd.CFrame
-                    
-                    if targetPivot then
-                        local layCFrame = targetPivot * CFrame.Angles(math.rad(90), 0, 0)
-                        hrp.AssemblyLinearVelocity = Vector3.zero
-                        hrp.CFrame = layCFrame + Vector3.new(0, 0.5, 0)
-                        
-                        task.wait(0.08)
-                        
-                        hrp.CFrame = oldCFrame
-                        hrp.AssemblyLinearVelocity = Vector3.zero
-                        hrp.AssemblyAngularVelocity = Vector3.zero
-                        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Running) end
-                        task.wait(0.5)
-                    end
-                end
-            end
-        end) 
-    end 
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(0.2)
-        if autoShootMurderer then
-            pcall(function()
-                local imSheriff = false
-                if (LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Gun")) or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Gun")) then
-                    imSheriff = true
-                end
-                if imSheriff then
-                    local murderer = cachedMurderer or findMurderer()
-                    if murderer and murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-                        local myHRP = LocalPlayer.Character.HumanoidRootPart
-                        local mHRP = murderer.Character.HumanoidRootPart
-                        local rayDirection = (mHRP.Position - myHRP.Position).Unit * 1000
-                        local params = RaycastParams.new()
-                        params.FilterType = Enum.RaycastFilterType.Exclude
-                        params.FilterDescendantsInstances = {LocalPlayer.Character}
-
-                        local hit = Workspace:Raycast(myHRP.Position, rayDirection, params)
-                        if hit and hit.Instance and hit.Instance:IsDescendantOf(murderer.Character) then
-                            runShootActionNATIVE()
-                            task.wait(0.35)
-                        end
-                    end
-                end
-            end)
-        end
-    end
-end)
-
-local function toggleKillAura(state)
-    killAuraEnabled = state
-    if killAuraConn then killAuraConn:Disconnect() killAuraConn = nil end
-    if state then
-        killAuraConn = RunService.Heartbeat:Connect(function()
-            pcall(function()
-                if findMurderer() == LocalPlayer and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-                    local myHRP = LocalPlayer.Character.HumanoidRootPart
-                    local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-                    if not LocalPlayer.Character:FindFirstChild("Knife") then
-                        if LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Knife") and hum then
-                            hum:EquipTool(LocalPlayer.Backpack.Knife)
-                        end
-                    end
-
-                    local knife = LocalPlayer.Character:FindFirstChild("Knife")
-                    if not knife then return end
-
-                    for _, player in ipairs(Players:GetPlayers()) do
-                        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-                            local pHRP = player.Character.HumanoidRootPart
-                            local pHum = player.Character:FindFirstChildOfClass("Humanoid")
-                            if pHum and pHum.Health > 0 and (pHRP.Position - myHRP.Position).Magnitude < 7.5 then
-                                pHRP.CFrame = myHRP.CFrame + (myHRP.CFrame.LookVector * 2)
-                                task.wait(0.05)
-                                if knife:FindFirstChild("Stab") then
-                                    knife.Stab:FireServer("Slash")
-                                end
-                                break
-                            end
-                        end
-                    end
-                end
-            end)
-        end)
-    end
-end
-
-local function executeKillEveryone()
-    if findMurderer() ~= LocalPlayer then
-        Rayfield:Notify({Title = "Execution Error", Content = "You are not the Murderer in this session.", Duration = 3})
-        return
-    end
-    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
-
-    local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-    if not LocalPlayer.Character:FindFirstChild("Knife") then
-        if LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Knife") and hum then
-            hum:EquipTool(LocalPlayer.Backpack.Knife)
-        else
-            Rayfield:Notify({Title = "Execution Error", Content = "Knife tool missing from inventory.", Duration = 3})
-            return
-        end
-    end
-
-    local myHRP = LocalPlayer.Character.HumanoidRootPart
-    local knife = LocalPlayer.Character:FindFirstChild("Knife")
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-            local pHum = player.Character:FindFirstChildOfClass("Humanoid")
-            if pHum and pHum.Health > 0 then
-                player.Character.HumanoidRootPart.Anchored = true
-                player.Character.HumanoidRootPart.CFrame = myHRP.CFrame + (myHRP.CFrame.LookVector * 1.5)
-            end
-        end
-    end
-
-    task.wait(0.1)
-    if knife and knife:FindFirstChild("Stab") then
-        knife.Stab:FireServer("Slash")
-    end
-end
-
--- ==========================================================
--- MOTOR FLING TRIDIMENSIONAL (PURGED VECTORS)
--- ==========================================================
+-- [[ MOTOR DE FLING ]]
 local function executeFlingAction(targetPlayer)
     if not targetPlayer or targetPlayer == LocalPlayer then return end
     pcall(function()
@@ -699,22 +246,45 @@ local function executeFlingAction(targetPlayer)
             Workspace.CurrentCamera.CameraSubject = Humanoid
 
             task.wait(0.05)
+            
             RootPart.CFrame = getgenv().OldPos * CFrame.new(0, 0.5, 0)
             Character:SetPrimaryPartCFrame(getgenv().OldPos * CFrame.new(0, 0.5, 0))
+            
             RootPart.Velocity = Vector3.zero
             RootPart.RotVelocity = Vector3.zero
             RootPart.AssemblyLinearVelocity = Vector3.zero
             RootPart.AssemblyAngularVelocity = Vector3.zero
+            
             Humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
             Humanoid:ChangeState(Enum.HumanoidStateType.Running)
+            
             Workspace.FallenPartsDestroyHeight = getgenv().FPDH
         end
     end)
 end
 
--- ==========================================================
--- MOTOR DE VUELO ESTABILIZADO
--- ==========================================================
+-- [[ VARIABLES DE ESTADO ]]
+local aimbotEnabled = false
+local aimbotConn = nil
+local autoPickupEnabled = false
+local targetSpeed = 16
+
+local airWalkEnabled = false
+local airWalkPlatform = nil
+local noclipConnection = nil
+local airWalkConnection = nil
+local currentAirWalkHeight = 0
+
+-- [[ MÓDULO DE VUELO ]]
+local isFlying = false
+local flyMaxSpeed = 50
+local flyAcceleration = 2
+local currentFlySpeed = 0
+local flyDirection = Vector3.zero
+local flyBodyGyro = nil
+local flyBodyVel = nil
+local flyConnection = nil
+
 local function startFly()
     if isFlying then return end
     local char = LocalPlayer.Character
@@ -784,217 +354,672 @@ local function stopFly()
     local char = LocalPlayer.Character
     if char then
         local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then hum.PlatformStand = false end
+        if hum then hum:PlatformStand = false end
     end
     isFlying = false
     currentFlySpeed = 0
 end
 
+-- Carga segura y actualizada de Rayfield (Dominio Oficial)
+local successRayfield, Rayfield = pcall(function()
+    return loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+end)
+
+if not successRayfield or not Rayfield then
+    warn("Crimson Blade: Error al cargar la librería Rayfield.")
+    return
+end
+
 -- ==========================================================
--- MOTOR ESP INTEGRADO (RADAR DE ROLES Y AMENAZAS)
+-- GESTIÓN DE ROLES Y EVENTOS MM2
 -- ==========================================================
-local function clearESP()
-    for _, highlight in pairs(activeHighlights) do
-        if highlight then highlight:Destroy() end
+pcall(function()
+    local globalRemotes = ReplicatedStorage:WaitForChild("Remotes", 5)
+    if globalRemotes and globalRemotes:FindFirstChild("Gameplay") and globalRemotes.Gameplay:FindFirstChild("PlayerDataChanged") then
+        globalRemotes.Gameplay.PlayerDataChanged.OnClientEvent:Connect(function(data)
+            gamePlayerData = data
+            local hasMurd = false
+            for player, info in pairs(data) do
+                if info.Role == "Murderer" then
+                    cachedMurderer = Players:FindFirstChild(player)
+                    hasMurd = true
+                end
+            end
+            if not hasMurd then
+                cachedMurderer = nil
+                resetRoundCombatStates()
+            end
+        end)
     end
-    table.clear(activeHighlights)
-    if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
-    if activeGunDropBillboard then activeGunDropBillboard:Destroy() activeGunDropBillboard = nil end
-    for _, h in pairs(activeTrapHighlights) do if h then h:Destroy() end end
-    table.clear(activeTrapHighlights)
+end)
+
+task.spawn(function()
+	while true do
+		if not cachedMurderer then
+			for _, i in ipairs(Players:GetPlayers()) do
+				if (i:FindFirstChild("Backpack") and i.Backpack:FindFirstChild("Knife")) or (i.Character and i.Character:FindFirstChild("Knife")) then
+					cachedMurderer = i
+					break
+				end
+			end
+		end
+		task.wait(1.5)
+	end
+end)
+
+-- ==========================================================
+-- MOTOR BALÍSTICO CINEMÁTICO PERFECCIONADO
+-- ==========================================================
+local function getKinematicPredictedPosition(targetPlayer, originPos, projectileSpeed)
+    if not targetPlayer or not targetPlayer.Character then return nil end
+    
+    local char = targetPlayer.Character
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or root
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    
+    if not root or not torso or not hum or hum.Health <= 0 then return nil end
+
+    local speedToUse = projectileSpeed or BULLET_SPEED
+    local currentPos = torso.Position
+    local velocity = root.AssemblyLinearVelocity
+    local distance = (currentPos - originPos).Magnitude
+    
+    local pingSeconds = (LocalPlayer:GetNetworkPing() * 0.5) + 0.015
+    local timeToHit = pingSeconds + (distance / speedToUse)
+    
+    local moveDir = hum.MoveDirection
+    local speed = velocity.Magnitude
+    local predX = currentPos.X
+    local predZ = currentPos.Z
+
+    if speed >= 0.8 and moveDir.Magnitude >= 0.05 then
+        predX = currentPos.X + (velocity.X * timeToHit * 0.95)
+        predZ = currentPos.Z + (velocity.Z * timeToHit * 0.95)
+    end
+
+    local gravity = Workspace.Gravity
+    local predY = currentPos.Y
+    local inAir = hum.FloorMaterial == Enum.Material.Air or math.abs(velocity.Y) > 0.8
+
+    if inAir then
+        predY = currentPos.Y + (velocity.Y * timeToHit) - (0.5 * gravity * (timeToHit ^ 2))
+        
+        local floorCheckRay = Workspace:Raycast(currentPos, Vector3.new(0, -6, 0))
+        if floorCheckRay then
+            local floorY = floorCheckRay.Position.Y + 2.3
+            if predY < floorY then
+                predY = floorY
+            end
+        end
+    end
+
+    return Vector3.new(predX, predY, predZ)
+end
+
+-- ==========================================================
+-- HOOK DE SILENT AIM (__NAMECALL)
+-- ==========================================================
+local function isWithinFOV(targetPosition)
+    if not useFOVCheck then return true end
+    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPosition)
+    if not onScreen then return false end
+    
+    local mousePos = UserInputService:GetMouseLocation()
+    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+    return dist <= silentAimFOV
+end
+
+if hookmetamethod then
+    pcall(function()
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            local args = {...}
+
+            if not checkcaller() and silentAimEnabled and method == "FireServer" and tostring(self) == "Shoot" then
+                local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Gun")
+                if tool and self.Parent == tool then
+                    local murderer = cachedMurderer or findMurderer() or findSheriffNotMe()
+                    if murderer and murderer.Character then
+                        local mTorso = murderer.Character:FindFirstChild("UpperTorso") or murderer.Character:FindFirstChild("Torso") or murderer.Character:FindFirstChild("HumanoidRootPart")
+                        local rightHand = LocalPlayer.Character:FindFirstChild("RightHand") or LocalPlayer.Character:FindFirstChild("Right Arm") or LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+
+                        if mTorso and rightHand then
+                            local shootOrigin = rightHand.Position
+
+                            if isWithinFOV(mTorso.Position) then
+                                local rayParams = RaycastParams.new()
+                                rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                                rayParams.FilterDescendantsInstances = {LocalPlayer.Character, murderer.Character}
+                                rayParams.IgnoreWater = true
+
+                                local ray = Workspace:Raycast(shootOrigin, (mTorso.Position - shootOrigin), rayParams)
+                                local wallBlocking = (ray and ray.Instance and ray.Instance.CanCollide and ray.Instance.Transparency < 0.8)
+
+                                if not wallBlocking then
+                                    local predictedTargetPos = getKinematicPredictedPosition(murderer, shootOrigin, BULLET_SPEED)
+                                    if predictedTargetPos then
+                                        args[1] = CFrame.new(shootOrigin)
+                                        args[2] = CFrame.new(predictedTargetPos)
+                                        return oldNamecall(self, unpack(args))
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            return oldNamecall(self, ...)
+        end))
+    end)
+end
+
+-- ==========================================================
+-- ACCIÓN DE DISPARO (GUN)
+-- ==========================================================
+local function runShootActionNATIVE()
+    pcall(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+
+        local backpack = LocalPlayer:FindFirstChild("Backpack")
+        local gun = char:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
+        if not gun then return end
+
+        if gun.Parent == backpack then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum:EquipTool(gun) end
+            task.wait(0.04)
+        end
+
+        local murderer = cachedMurderer or findMurderer() or findSheriffNotMe()
+        if not murderer or not murderer.Character then return end
+
+        local mRoot = murderer.Character:FindFirstChild("HumanoidRootPart")
+        local mTorso = murderer.Character:FindFirstChild("UpperTorso") or murderer.Character:FindFirstChild("Torso") or mRoot
+        local myRoot = char:FindFirstChild("HumanoidRootPart")
+        local rightHand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm") or myRoot
+        if not mRoot or not mTorso or not myRoot or not rightHand then return end
+
+        local shootOrigin = rightHand.Position
+
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        rayParams.FilterDescendantsInstances = {char, murderer.Character}
+        rayParams.IgnoreWater = true
+        
+        local ray = Workspace:Raycast(shootOrigin, (mTorso.Position - shootOrigin), rayParams)
+        if ray and ray.Instance and ray.Instance.CanCollide and ray.Instance.Transparency < 0.8 then
+            return
+        end
+
+        local targetPredictedPos = getKinematicPredictedPosition(murderer, shootOrigin, BULLET_SPEED)
+        if not targetPredictedPos then return end
+
+        local shootRemote = gun:FindFirstChild("Shoot")
+        if shootRemote then
+            shootRemote:FireServer(
+                CFrame.new(shootOrigin),
+                CFrame.new(targetPredictedPos)
+            )
+        end
+    end)
+end
+
+-- ==========================================================
+-- ACCIÓN DE LANZAR CUCHILLO
+-- ==========================================================
+local function runKnifeThrowActionNATIVE()
+    pcall(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+
+        local backpack = LocalPlayer:FindFirstChild("Backpack")
+        local knife = char:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
+        if not knife then 
+            Rayfield:Notify({Title = "Error", Content = "No tienes el cuchillo.", Duration = 2})
+            return 
+        end
+
+        if knife.Parent == backpack then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum:EquipTool(knife) end
+            task.wait(0.05)
+        end
+
+        local target = findNearestPlayer()
+        if not target or not target.Character then 
+            Rayfield:Notify({Title = "Aviso", Content = "No hay jugadores cercanos.", Duration = 2})
+            return 
+        end
+
+        local tRoot = target.Character:FindFirstChild("HumanoidRootPart")
+        local tTorso = target.Character:FindFirstChild("UpperTorso") or target.Character:FindFirstChild("Torso") or tRoot
+        local myRoot = char:FindFirstChild("HumanoidRootPart")
+        local rightHand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm") or myRoot
+        if not tRoot or not tTorso or not myRoot or not rightHand then return end
+
+        local throwOrigin = rightHand.Position
+        local predictedTargetPos = getKinematicPredictedPosition(target, throwOrigin, KNIFE_SPEED) or tTorso.Position
+
+        local equippedKnife = char:FindFirstChild("Knife")
+        if equippedKnife then
+            local throwRemote = equippedKnife:FindFirstChild("Throw") or equippedKnife:FindFirstChild("Slash") or equippedKnife:FindFirstChild("Stab")
+            if throwRemote then
+                if equippedKnife:FindFirstChild("Throw") then
+                    equippedKnife.Throw:FireServer(
+                        CFrame.new(throwOrigin),
+                        CFrame.new(predictedTargetPos)
+                    )
+                elseif equippedKnife:FindFirstChild("Stab") then
+                    equippedKnife.Stab:FireServer("Slash")
+                end
+            end
+        end
+    end)
+end
+
+-- BUCLES EN SEGUNDO PLANO
+task.spawn(function()
+    while true do
+        task.wait(0.16)
+        if autoShootMurderer then
+            pcall(function()
+                local hasGun = (LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Gun")) or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Gun"))
+                if hasGun then
+                    runShootActionNATIVE()
+                end
+            end)
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(0.2)
+        if killClosestEnabled then
+            pcall(function()
+                if findMurderer() == LocalPlayer and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                    local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                    if not LocalPlayer.Character:FindFirstChild("Knife") then
+                        if LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Knife") and hum then
+                            hum:EquipTool(LocalPlayer.Backpack.Knife)
+                        end
+                    end
+
+                    local target = findNearestPlayer()
+                    if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character:FindFirstChild("Knife") then
+                        local tHRP = target.Character.HumanoidRootPart
+                        local myHRP = LocalPlayer.Character.HumanoidRootPart
+                        myHRP.CFrame = tHRP.CFrame * CFrame.new(0, 0, 1.5)
+                        task.wait(0.05)
+                        if LocalPlayer.Character:FindFirstChild("Knife") and LocalPlayer.Character.Knife:FindFirstChild("Stab") then 
+                            LocalPlayer.Character.Knife.Stab:FireServer("Slash") 
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+local function executeKillEveryone()
+    pcall(function()
+        if findMurderer() ~= LocalPlayer then
+            Rayfield:Notify({Title = "Error", Content = "No eres el Asesino de la partida.", Duration = 3})
+            return
+        end
+        if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if not LocalPlayer.Character:FindFirstChild("Knife") then
+            if LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Knife") and hum then
+                hum:EquipTool(LocalPlayer.Backpack.Knife)
+            else
+                Rayfield:Notify({Title = "Error", Content = "No se encontró el cuchillo.", Duration = 3})
+                return
+            end
+        end
+
+        local myHRP = LocalPlayer.Character.HumanoidRootPart
+        local knife = LocalPlayer.Character:FindFirstChild("Knife")
+
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                local pHum = player.Character:FindFirstChildOfClass("Humanoid")
+                if pHum and pHum.Health > 0 then
+                    player.Character.HumanoidRootPart.CFrame = myHRP.CFrame + (myHRP.CFrame.LookVector * 1.5)
+                end
+            end
+        end
+
+        task.wait(0.1)
+        if knife and knife:FindFirstChild("Stab") then
+            knife.Stab:FireServer("Slash")
+        end
+    end)
+end
+
+Workspace.ChildRemoved:Connect(function(child)
+    if child:FindFirstChild("CoinContainer") or child:FindFirstChild("Spawns") then
+        resetRoundCombatStates()
+    end
+end)
+
+-- [[ BOTONES FLOTANTES MÓVILES ]]
+local function toggleGunButton(state)
+    pcall(function()
+        if gunButtonGui then gunButtonGui:Destroy(); gunButtonGui = nil end
+    end)
+    
+    if state then
+        gunButtonGui = Instance.new("ScreenGui")
+        gunButtonGui.Name = "GunButton_Mobile"
+        gunButtonGui.ResetOnSpawn = false
+        gunButtonGui.Parent = MobileTargetGui
+
+        local Btn = Instance.new("TextButton")
+        Btn.Name = "BtnShoot"
+        Btn.Size = UDim2.new(0, 160, 0, 45)
+        Btn.Position = UDim2.new(0.5, -80, 0.35, 0)
+        Btn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+        Btn.Font = Enum.Font.GothamBold
+        Btn.Text = "Shoot Murderer (Kinematic)"
+        Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        Btn.TextSize = 11
+        Btn.Active = true
+        Btn.Draggable = true
+        Btn.Parent = gunButtonGui
+
+        local Corner = Instance.new("UICorner")
+        Corner.CornerRadius = UDim.new(0, 8)
+        Corner.Parent = Btn
+
+        local Stroke = Instance.new("UIStroke")
+        Stroke.Thickness = 2
+        Stroke.Color = Color3.fromRGB(197, 0, 0)
+        Stroke.Parent = Btn
+
+        Btn.MouseButton1Click:Connect(function()
+            runShootActionNATIVE()
+        end)
+    end
+end
+
+local function toggleKnifeButton(state)
+    pcall(function()
+        if knifeButtonGui then knifeButtonGui:Destroy(); knifeButtonGui = nil end
+    end)
+    
+    if state then
+        knifeButtonGui = Instance.new("ScreenGui")
+        knifeButtonGui.Name = "KnifeButton_Mobile"
+        knifeButtonGui.ResetOnSpawn = false
+        knifeButtonGui.Parent = MobileTargetGui
+
+        local Btn = Instance.new("TextButton")
+        Btn.Name = "BtnKnife"
+        Btn.Size = UDim2.new(0, 180, 0, 45)
+        Btn.Position = UDim2.new(0.5, -90, 0.45, 0)
+        Btn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+        Btn.Font = Enum.Font.GothamBold
+        Btn.Text = "Throw Knife (Closest)"
+        Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        Btn.TextSize = 11
+        Btn.Active = true
+        Btn.Draggable = true
+        Btn.Parent = knifeButtonGui
+
+        local Corner = Instance.new("UICorner")
+        Corner.CornerRadius = UDim.new(0, 8)
+        Corner.Parent = Btn
+
+        local Stroke = Instance.new("UIStroke")
+        Stroke.Thickness = 2
+        Stroke.Color = Color3.fromRGB(197, 0, 0)
+        Stroke.Parent = Btn
+
+        Btn.MouseButton1Click:Connect(function()
+            runKnifeThrowActionNATIVE()
+        end)
+    end
+end
+
+-- [[ MOTOR ESP ]]
+local activeHighlights = {}
+local activeGunDropHighlight = nil
+local activeGunDropBillboard = nil
+local activeTrapHighlights = {}
+
+local espActive = false
+local ignoreInnocents = false
+local gunDropESPActive = false
+local trapESPActive = false
+
+local databaseConnectionESP = nil
+local playerAddedConnectionESP = nil
+local weaponConnections = {}
+local espLoop = nil
+
+local function clearESP()
+    pcall(function()
+        for _, highlight in pairs(activeHighlights) do
+            if highlight then highlight:Destroy() end
+        end
+        table.clear(activeHighlights)
+        if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
+        if activeGunDropBillboard then activeGunDropBillboard:Destroy() activeGunDropBillboard = nil end
+        for _, h in pairs(activeTrapHighlights) do if h then h:Destroy() end end
+        table.clear(activeTrapHighlights)
+    end)
 end
 
 local function updateGunDropESP()
-    if not espActive and not gunDropESPActive then
-        if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
-        if activeGunDropBillboard then activeGunDropBillboard:Destroy() activeGunDropBillboard = nil end
-        return
-    end
-
-    local gd = Workspace:FindFirstChild("GunDrop", true)
-    if gd then
-        local targetAdornee = (gd:IsA("Model") and (gd.PrimaryPart or gd)) or gd
-        if not activeGunDropHighlight or not activeGunDropHighlight.Parent then
-            if activeGunDropHighlight then activeGunDropHighlight:Destroy() end
-            activeGunDropHighlight = Instance.new("Highlight")
-            activeGunDropHighlight.Name = "Executive_GunDrop_ESP"
-            activeGunDropHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-            activeGunDropHighlight.FillTransparency = 0.5
-            activeGunDropHighlight.OutlineTransparency = 0
-            activeGunDropHighlight.OutlineColor = Color3.fromRGB(255, 255, 0)
-            activeGunDropHighlight.FillColor = Color3.fromRGB(255, 255, 0)
-            activeGunDropHighlight.Adornee = gd
-            activeGunDropHighlight.Parent = MobileTargetGui
+    pcall(function()
+        if not espActive and not gunDropESPActive then
+            if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
+            if activeGunDropBillboard then activeGunDropBillboard:Destroy() activeGunDropBillboard = nil end
+            return
         end
 
-        if not activeGunDropBillboard or not activeGunDropBillboard.Parent then
-            if activeGunDropBillboard then activeGunDropBillboard:Destroy() end
-            local bg = Instance.new("BillboardGui")
-            bg.Name = "Executive_GunDrop_Billboard"
-            bg.AlwaysOnTop = true
-            bg.Size = UDim2.new(0, 160, 0, 40)
-            bg.StudsOffset = Vector3.new(0, 2, 0)
-            bg.Adornee = targetAdornee
-            bg.Parent = MobileTargetGui
+        local gd = Workspace:FindFirstChild("GunDrop", true)
+        if gd then
+            local targetAdornee = (gd:IsA("Model") and (gd.PrimaryPart or gd)) or gd
+            if not activeGunDropHighlight or not activeGunDropHighlight.Parent then
+                if activeGunDropHighlight then activeGunDropHighlight:Destroy() end
+                activeGunDropHighlight = Instance.new("Highlight")
+                activeGunDropHighlight.Name = "GunDrop_ESP"
+                activeGunDropHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                activeGunDropHighlight.FillTransparency = 0.5
+                activeGunDropHighlight.OutlineTransparency = 0
+                activeGunDropHighlight.OutlineColor = Color3.fromRGB(255, 255, 0)
+                activeGunDropHighlight.FillColor = Color3.fromRGB(255, 255, 0)
+                activeGunDropHighlight.Adornee = gd
+                activeGunDropHighlight.Parent = MobileTargetGui
+            end
 
-            local lbl = Instance.new("TextLabel")
-            lbl.Size = UDim2.new(1, 0, 1, 0)
-            lbl.BackgroundTransparency = 1
-            lbl.Font = Enum.Font.GothamBold
-            lbl.Text = "DROPPED GUN"
-            lbl.TextColor3 = Color3.fromRGB(255, 255, 0)
-            lbl.TextSize = 14
-            lbl.Parent = bg
+            if not activeGunDropBillboard or not activeGunDropBillboard.Parent then
+                if activeGunDropBillboard then activeGunDropBillboard:Destroy() end
+                local bg = Instance.new("BillboardGui")
+                bg.Name = "GunDrop_Billboard"
+                bg.AlwaysOnTop = true
+                bg.Size = UDim2.new(0, 160, 0, 40)
+                bg.StudsOffset = Vector3.new(0, 2, 0)
+                bg.Adornee = targetAdornee
+                bg.Parent = MobileTargetGui
 
-            local stroke = Instance.new("UIStroke")
-            stroke.Thickness = 2
-            stroke.Color = Color3.fromRGB(0, 0, 0)
-            stroke.Parent = lbl
+                local lbl = Instance.new("TextLabel")
+                lbl.Size = UDim2.new(1, 0, 1, 0)
+                lbl.BackgroundTransparency = 1
+                lbl.Font = Enum.Font.GothamBold
+                lbl.Text = "DROPPED GUN"
+                lbl.TextColor3 = Color3.fromRGB(255, 255, 0)
+                lbl.TextSize = 14
+                lbl.Parent = bg
 
-            activeGunDropBillboard = bg
+                local stroke = Instance.new("UIStroke")
+                stroke.Thickness = 2
+                stroke.Color = Color3.fromRGB(0, 0, 0)
+                stroke.Parent = lbl
+
+                activeGunDropBillboard = bg
+            end
+        else
+            if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
+            if activeGunDropBillboard then activeGunDropBillboard:Destroy() activeGunDropBillboard = nil end
         end
-    else
-        if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
-        if activeGunDropBillboard then activeGunDropBillboard:Destroy() activeGunDropBillboard = nil end
-    end
+    end)
 end
 
 local function updateTrapsESP()
-    for _, v in ipairs(Workspace:GetDescendants()) do
-        if v.Name == "Trap" and v.Parent and v.Parent:IsA("Folder") then
-            v.Transparency = 0
-            if not activeTrapHighlights[v] or not activeTrapHighlights[v].Parent then
-                local hl = Instance.new("Highlight")
-                hl.Name = "Executive_Trap_ESP"
-                hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-                hl.FillTransparency = 0.5
-                hl.OutlineTransparency = 0
-                hl.OutlineColor = Color3.fromRGB(255, 0, 0)
-                hl.FillColor = Color3.fromRGB(255, 0, 0)
-                hl.Adornee = v
-                hl.Parent = MobileTargetGui
-                activeTrapHighlights[v] = hl
+    pcall(function()
+        for _, v in ipairs(Workspace:GetDescendants()) do
+            if v.Name == "Trap" and v.Parent and v.Parent:IsA("Folder") then
+                v.Transparency = 0
+                if not activeTrapHighlights[v] or not activeTrapHighlights[v].Parent then
+                    local hl = Instance.new("Highlight")
+                    hl.Name = "Trap_ESP"
+                    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                    hl.FillTransparency = 0.5
+                    hl.OutlineTransparency = 0
+                    hl.OutlineColor = Color3.fromRGB(255, 0, 0)
+                    hl.FillColor = Color3.fromRGB(255, 0, 0)
+                    hl.Adornee = v
+                    hl.Parent = MobileTargetGui
+                    activeTrapHighlights[v] = hl
+                end
             end
         end
-    end
-    for trap, hl in pairs(activeTrapHighlights) do
-        if not trap or not trap.Parent then
-            if hl then hl:Destroy() end
-            activeTrapHighlights[trap] = nil
+        for trap, hl in pairs(activeTrapHighlights) do
+            if not trap or not trap.Parent then
+                if hl then hl:Destroy() end
+                activeTrapHighlights[trap] = nil
+            end
         end
-    end
+    end)
 end
 
 local function applyHighlightToCharacter(player, character)
-    if not espActive or not character then return end
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    local backpack = player:FindFirstChild("Backpack")
-    
-    local hl = activeHighlights[character]
-    if not hl or not hl.Parent then
-        if hl then hl:Destroy() end
-        hl = Instance.new("Highlight")
-        hl.Name, hl.DepthMode, hl.FillTransparency, hl.OutlineTransparency, hl.Adornee, hl.Parent = "Executive_Player_ESP", Enum.HighlightDepthMode.AlwaysOnTop, 1, 0, character, MobileTargetGui
-        activeHighlights[character] = hl
-    end
+    pcall(function()
+        if not espActive or not character then return end
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        local backpack = player:FindFirstChild("Backpack")
+        
+        local hl = activeHighlights[character]
+        if not hl or not hl.Parent then
+            if hl then hl:Destroy() end
+            hl = Instance.new("Highlight")
+            hl.Name, hl.DepthMode, hl.FillTransparency, hl.OutlineTransparency, hl.Adornee, hl.Parent = "Mobile_ESP", Enum.HighlightDepthMode.AlwaysOnTop, 1, 0, character, MobileTargetGui
+            activeHighlights[character] = hl
+        end
 
-    if humanoid and humanoid.Health <= 0 then
-        hl.OutlineColor = Color3.fromRGB(0, 255, 8)
+        if humanoid and humanoid.Health <= 0 then
+            hl.OutlineColor = Color3.fromRGB(0, 255, 8)
+            hl.Enabled = true
+            return
+        end
+
+        local murderer = findMurderer()
+        local sheriff = findSheriff()
+        local isMurderer = (player == murderer)
+        local isSheriff = (player == sheriff)
+        local hasGun = (backpack and backpack:FindFirstChild("Gun")) or character:FindFirstChild("Gun") ~= nil
+        local isHero = hasGun and not isSheriff
+
+        if ignoreInnocents and not isMurderer and not isSheriff and not isHero and not hasGun then
+            if activeHighlights[character] then activeHighlights[character]:Destroy() activeHighlights[character] = nil end
+            return
+        end
+
+        local targetColor = Color3.fromRGB(0, 255, 8)
+        if isMurderer then
+            targetColor = Color3.fromRGB(255, 0, 4)
+        elseif (isSheriff or isHero or hasGun) then
+            targetColor = Color3.fromRGB(0, 150, 255)
+        end
+
+        if hl.OutlineColor ~= targetColor then hl.OutlineColor = targetColor end
         hl.Enabled = true
-        return
-    end
-
-    local murderer = findMurderer()
-    local sheriff = findSheriff()
-    local isMurderer = (player == murderer)
-    local isSheriff = (player == sheriff)
-    local hasGun = (backpack and backpack:FindFirstChild("Gun")) or character:FindFirstChild("Gun") ~= nil
-    local isHero = hasGun and not isSheriff
-
-    if ignoreInnocents and not isMurderer and not isSheriff and not isHero and not hasGun then
-        if activeHighlights[character] then activeHighlights[character]:Destroy() activeHighlights[character] = nil end
-        return
-    end
-
-    local targetColor = Color3.fromRGB(0, 255, 8)
-    if isMurderer then
-        targetColor = Color3.fromRGB(255, 0, 4)
-    elseif (isSheriff or isHero or hasGun) then
-        targetColor = Color3.fromRGB(0, 150, 255)
-    end
-
-    if hl.OutlineColor ~= targetColor then hl.OutlineColor = targetColor end
-    hl.Enabled = true
+    end)
 end
 
 local function reloadESP()
-    if not espActive then 
-        clearESP()
+    pcall(function()
+        if not espActive then 
+            clearESP()
+            updateGunDropESP()
+            updateTrapsESP()
+            return 
+        end
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Character then
+                applyHighlightToCharacter(player, player.Character)
+            end
+        end
         updateGunDropESP()
         updateTrapsESP()
-        return 
-    end
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player.Character then
-            applyHighlightToCharacter(player, player.Character)
-        end
-    end
-    updateGunDropESP()
-    updateTrapsESP()
+    end)
 end
 
 local function monitorPlayerWeapons(player)
-    local function onCharacter(character)
-        if not character then return end
-        applyHighlightToCharacter(player, character)
-        
-        local childAdded = character.ChildAdded:Connect(function(child)
-            if child:IsA("Tool") and (child.Name == "Gun" or child.Name == "Knife") then
-                applyHighlightToCharacter(player, character)
-            end
-        end)
-        local childRemoved = character.ChildRemoved:Connect(function(child)
-            if child:IsA("Tool") and (child.Name == "Gun" or child.Name == "Knife") then
-                applyHighlightToCharacter(player, character)
-            end
-        end)
-        table.insert(weaponConnections, childAdded)
-        table.insert(weaponConnections, childRemoved)
-    end
-    
-    local charAdded = player.CharacterAdded:Connect(onCharacter)
-    table.insert(weaponConnections, charAdded)
-    if player.Character then
-        task.spawn(onCharacter, player.Character)
-    end
-    
-    task.spawn(function()
-        local backpack = player:WaitForChild("Backpack", 5)
-        if backpack then
-            local bpAdded = backpack.ChildAdded:Connect(function(child)
+    pcall(function()
+        local function onCharacter(character)
+            if not character then return end
+            applyHighlightToCharacter(player, character)
+            
+            local childAdded = character.ChildAdded:Connect(function(child)
                 if child:IsA("Tool") and (child.Name == "Gun" or child.Name == "Knife") then
-                    reloadESP()
+                    applyHighlightToCharacter(player, character)
                 end
             end)
-            local bpRemoved = backpack.ChildRemoved:Connect(function(child)
+            local childRemoved = character.ChildRemoved:Connect(function(child)
                 if child:IsA("Tool") and (child.Name == "Gun" or child.Name == "Knife") then
-                    reloadESP()
+                    applyHighlightToCharacter(player, character)
                 end
             end)
-            table.insert(weaponConnections, bpAdded)
-            table.insert(weaponConnections, bpRemoved)
+            table.insert(weaponConnections, childAdded)
+            table.insert(weaponConnections, childRemoved)
         end
+        
+        local charAdded = player.CharacterAdded:Connect(onCharacter)
+        table.insert(weaponConnections, charAdded)
+        if player.Character then
+            task.spawn(onCharacter, player.Character)
+        end
+        
+        task.spawn(function()
+            local backpack = player:WaitForChild("Backpack", 5)
+            if backpack then
+                local bpAdded = backpack.ChildAdded:Connect(function(child)
+                    if child:IsA("Tool") and (child.Name == "Gun" or child.Name == "Knife") then
+                        reloadESP()
+                    end
+                end)
+                local bpRemoved = backpack.ChildRemoved:Connect(function(child)
+                    if child:IsA("Tool") and (child.Name == "Gun" or child.Name == "Knife") then
+                        reloadESP()
+                    end
+                end)
+                table.insert(weaponConnections, bpAdded)
+                table.insert(weaponConnections, bpRemoved)
+            end
+        end)
     end)
 end
 
 local function startESP()
     espActive = true
-    if globalRemotes and globalRemotes:FindFirstChild("Gameplay") and globalRemotes.Gameplay:FindFirstChild("PlayerDataChanged") then
-        databaseConnectionESP = globalRemotes.Gameplay.PlayerDataChanged.OnClientEvent:Connect(function(data)
-            playerDataESP = data
-            reloadESP()
-        end)
-    end
+    pcall(function()
+        local globalRemotes = ReplicatedStorage:FindFirstChild("Remotes")
+        if globalRemotes and globalRemotes:FindFirstChild("Gameplay") and globalRemotes.Gameplay:FindFirstChild("PlayerDataChanged") then
+            databaseConnectionESP = globalRemotes.Gameplay.PlayerDataChanged.OnClientEvent:Connect(function(data)
+                playerDataESP = data
+                reloadESP()
+            end)
+        end
+    end)
 
     local function setupPlayerESP(player)
         if player.Character then
@@ -1050,9 +1075,428 @@ local function stopESP()
     if playerAddedConnectionESP then playerAddedConnectionESP:Disconnect() playerAddedConnectionESP = nil end
 end
 
+-- ANTI-AFK
+LocalPlayer.Idled:Connect(function()
+    pcall(function()
+        VirtualUser:Button2Down(Vector2.new(0,0), Camera.CFrame)
+        task.wait(1)
+        VirtualUser:Button2Up(Vector2.new(0,0), Camera.CFrame)
+    end)
+end)
+
+-- TEMA DARK CRIMSON OLED
+Rayfield.Theme.DarkCrimson = {
+    TextFont = "Gotham",
+    TextColor = Color3.fromRGB(240, 240, 240),
+    Background = Color3.fromRGB(8, 7, 7),
+    Topbar = Color3.fromRGB(12, 10, 11),
+    Shadow = Color3.fromRGB(0, 0, 0),
+    NotificationBackground = Color3.fromRGB(15, 12, 14),
+    NotificationActionsBackground = Color3.fromRGB(22, 16, 18),
+    TabBackground = Color3.fromRGB(14, 11, 13),
+    TabStroke = Color3.fromRGB(45, 15, 20),
+    TabBackgroundSelected = Color3.fromRGB(140, 20, 30),
+    TabTextColor = Color3.fromRGB(160, 150, 150),
+    SelectedTabTextColor = Color3.fromRGB(255, 255, 255),
+    ElementBackground = Color3.fromRGB(13, 10, 12),
+    ElementBackgroundHover = Color3.fromRGB(20, 14, 16),
+    SecondaryElementBackground = Color3.fromRGB(15, 12, 14),
+    ElementStroke = Color3.fromRGB(60, 20, 25),
+    SecondaryElementStroke = Color3.fromRGB(40, 15, 18),
+    ToggleBackground = Color3.fromRGB(10, 8, 8),
+    ToggleEnabled = Color3.fromRGB(180, 25, 35),
+    ToggleDisabled = Color3.fromRGB(10, 8, 8),
+    ToggleEnabledStroke = Color3.fromRGB(180, 25, 35),
+    ToggleDisabledStroke = Color3.fromRGB(35, 20, 20),
+    ToggleEnabledOuterStroke = Color3.fromRGB(180, 25, 35),
+    ToggleDisabledOuterStroke = Color3.fromRGB(35, 20, 20),
+    SliderBackground = Color3.fromRGB(8, 6, 6),
+    SliderProgress = Color3.fromRGB(180, 25, 35),
+    SliderStroke = Color3.fromRGB(180, 25, 35),
+    InputBackground = Color3.fromRGB(10, 8, 8),
+    InputStroke = Color3.fromRGB(35, 20, 20),
+    PlaceholderColor = Color3.fromRGB(100, 80, 80)
+}
+
 -- ==========================================================
--- BUCLES EN SEGUNDO PLANO (ANTI-FLING AVANZADO Y HITBOXES)
+-- CREACIÓN DE VENTANA
 -- ==========================================================
+local Window = Rayfield:CreateWindow({
+    Name = "Crimson Blade",
+    LoadingTitle = "Iniciando Motor High-End",
+    LoadingSubtitle = "Kinematic Ballistics & Silent Aim",
+    Theme = "DarkCrimson",
+    DisableRayfieldPrompts = true,
+    ConfigurationSaving = { Enabled = false },
+    Discord = { Enabled = false }
+})
+
+local MainTab      = Window:CreateTab("Main", "swords")
+local ESPTab       = Window:CreateTab("ESP", "eye")
+local MM2AdvTab    = Window:CreateTab("MM2 Advanced", "crosshair")
+local UniversalTab = Window:CreateTab("Universal", "globe")
+local PlayerTab    = Window:CreateTab("Player", "user")
+local SettingsTab  = Window:CreateTab("Settings", "settings")
+
+-- ==========================================================
+-- PESTAÑA: MAIN
+-- ==========================================================
+MainTab:CreateSection("silent aim module")
+
+MainTab:CreateToggle({
+    Name = "Silent Aim (100% Hit)",
+    Info = "Redirige automáticamente el disparo de tu pistola al asesino sin mover tu cámara.",
+    CurrentValue = true,
+    Flag = "SilentAimFlag",
+    Callback = function(Value) silentAimEnabled = Value end,
+})
+
+MainTab:CreateToggle({
+    Name = "Limit by FOV Circle",
+    Info = "Solo redirige la bala si disparas en dirección general al asesino.",
+    CurrentValue = false,
+    Flag = "SilentAimFOVToggle",
+    Callback = function(Value) useFOVCheck = Value end,
+})
+
+MainTab:CreateSlider({
+    Name = "Silent Aim FOV Radius",
+    Range = {50, 600},
+    Increment = 10,
+    Suffix = " px",
+    CurrentValue = 220,
+    Flag = "SilentAimFOVSlider",
+    Callback = function(Value) silentAimFOV = Value end,
+})
+
+MainTab:CreateSection("blatant module")
+
+task.spawn(function() 
+    while task.wait(0.05) do 
+        pcall(function() 
+            if autoPickupEnabled then
+                local gd = Workspace:FindFirstChild("GunDrop", true) 
+                if gd and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then 
+                    local hrp = LocalPlayer.Character.HumanoidRootPart
+                    local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                    local oldCFrame = hrp.CFrame
+                    local targetPivot = gd:IsA("Model") and (gd.PrimaryPart and gd.PrimaryPart.CFrame or gd:GetPivot()) or gd.CFrame
+                    
+                    if targetPivot then
+                        local layCFrame = targetPivot * CFrame.Angles(math.rad(90), 0, 0)
+                        hrp.AssemblyLinearVelocity = Vector3.zero
+                        hrp.CFrame = layCFrame + Vector3.new(0, 0.5, 0)
+                        task.wait(0.08)
+                        hrp.CFrame = oldCFrame
+                        hrp.AssemblyLinearVelocity = Vector3.zero
+                        hrp.AssemblyAngularVelocity = Vector3.zero
+                        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Running) end
+                        task.wait(0.5)
+                    end
+                end
+            end
+        end) 
+    end 
+end)
+
+MainTab:CreateToggle({
+    Name = "Auto-Pickup",
+    Info = "Recoge la pistola instantáneamente al caer.",
+    CurrentValue = false,
+    Flag = "AutoPickupFlag",
+    Callback = function(Value) autoPickupEnabled = Value end,
+})
+
+MainTab:CreateToggle({
+    Name = "Gun Button",
+    Info = "Botón flotante para disparar al Murderer.",
+    CurrentValue = false,
+    Flag = "GunButtonFlag",
+    Callback = function(Value) toggleGunButton(Value) end,
+})
+
+MainTab:CreateToggle({
+    Name = "Knife Button",
+    Info = "Botón flotante que equipa y lanza el cuchillo al jugador más cercano.",
+    CurrentValue = false,
+    Flag = "KnifeButtonFlag",
+    Callback = function(Value) toggleKnifeButton(Value) end,
+})
+
+MainTab:CreateButton({
+    Name = "Fling Murderer",
+    Callback = function()
+        local m = findMurderer()
+        if m then executeFlingAction(m) else Rayfield:Notify({Title = "Error", Content = "Asesino no encontrado.", Duration = 3}) end
+    end,
+})
+
+MainTab:CreateButton({
+    Name = "Fling Sheriff",
+    Callback = function()
+        local s = findSheriff()
+        if s then executeFlingAction(s) else Rayfield:Notify({Title = "Error", Content = "Sheriff no encontrado.", Duration = 3}) end
+    end,
+})
+
+MainTab:CreateSection("legit assist")
+
+local MainTrackerLabel = MainTab:CreateLabel("escaneando roles...")
+task.spawn(function()
+    while task.wait(0.4) do
+        pcall(function()
+            local murderer = findMurderer()
+            local sh = findSheriff()
+            MainTrackerLabel:Set("murderer: " .. (murderer and murderer.Name or "scanning...") .. " | sheriff: " .. (sh and sh.Name or "scanning..."))
+        end)
+    end
+end)
+
+aimbotConn = RunService.RenderStepped:Connect(function() 
+    if aimbotEnabled then 
+        local murderer = findMurderer()
+        if murderer and murderer.Character and murderer.Character:FindFirstChild("HumanoidRootPart") then 
+            local hrp = murderer.Character.HumanoidRootPart
+            local targetPos = hrp.Position + (hrp.AssemblyLinearVelocity * 0.13)
+            Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, targetPos), 0.32)
+        end 
+    end 
+end)
+
+MainTab:CreateToggle({
+    Name = "Aimbot Torso",
+    Info = "Fija la cámara suavemente al torso del asesino.",
+    CurrentValue = false,
+    Flag = "TargetLock",
+    Callback = function(Value) aimbotEnabled = Value end,
+})
+
+MainTab:CreateButton({
+    Name = "Manual Shoot (Kinematic)",
+    Callback = function() runShootActionNATIVE() end,
+})
+
+-- ==========================================================
+-- PESTAÑA: ESP
+-- ==========================================================
+ESPTab:CreateSection("visuals radar")
+
+ESPTab:CreateToggle({
+    Name = "Player ESP",
+    Info = "ESP oficial con contornos para Murderer, Sheriff e Inocentes.",
+    CurrentValue = false,
+    Flag = "ESPFlag",
+    Callback = function(Value)
+        if Value then startESP() else stopESP() end
+    end,
+})
+
+ESPTab:CreateToggle({
+    Name = "Dropped Gun ESP",
+    Info = "Resalta pistolas tiradas en el mapa.",
+    CurrentValue = false,
+    Flag = "GunDropESPFlag",
+    Callback = function(Value)
+        gunDropESPActive = Value
+        updateGunDropESP()
+    end,
+})
+
+ESPTab:CreateToggle({
+    Name = "Traps ESP",
+    Info = "Resalta las trampas del Asesino.",
+    CurrentValue = false,
+    Flag = "TrapsESPFlag",
+    Callback = function(Value)
+        trapESPActive = Value
+        if not Value then
+            for _, h in pairs(activeTrapHighlights) do if h then h:Destroy() end end
+            table.clear(activeTrapHighlights)
+        else
+            updateTrapsESP()
+        end
+    end,
+})
+
+ESPTab:CreateSection("esp filters")
+
+ESPTab:CreateToggle({
+    Name = "Hide Innocents",
+    Info = "Oculta el resaltado de inocentes.",
+    CurrentValue = false,
+    Flag = "IgnoreInnocentsFlag",
+    Callback = function(Value) 
+        ignoreInnocents = Value
+        reloadESP()
+    end,
+})
+
+-- ==========================================================
+-- PESTAÑA: MM2 ADVANCED
+-- ==========================================================
+MM2AdvTab:CreateSection("combat advanced")
+
+MM2AdvTab:CreateToggle({
+    Name = "Auto-Shoot Murderer",
+    Info = "Dispara automáticamente con cálculo cinemático de trayectoria.",
+    CurrentValue = false,
+    Flag = "AutoShootAdvFlag",
+    Callback = function(Value) autoShootMurderer = Value end,
+})
+
+MM2AdvTab:CreateToggle({
+    Name = "Kill Closest Player",
+    Info = "Elimina automáticamente al jugador más cercano como asesino.",
+    CurrentValue = false,
+    Flag = "KillClosestAdvFlag",
+    Callback = function(Value) killClosestEnabled = Value end,
+})
+
+MM2AdvTab:CreateButton({
+    Name = "Kill Everyone",
+    Callback = function() executeKillEveryone() end,
+})
+
+MM2AdvTab:CreateSection("utility & teleports")
+
+MM2AdvTab:CreateButton({
+    Name = "Expose Roles into Chat",
+    Callback = function()
+        pcall(function()
+            local m = findMurderer()
+            local s = findSheriff()
+            local msg = string.format("Murderer: %s | Sheriff: %s | << Crimson Blade >>", m and m.Name or "-", s and s.Name or "-")
+            if TextChatService and TextChatService.TextChannels and TextChatService.TextChannels:FindFirstChild("RBXGeneral") then
+                TextChatService.TextChannels.RBXGeneral:SendAsync(msg)
+            end
+        end)
+    end,
+})
+
+MM2AdvTab:CreateButton({
+    Name = "Teleport to Lobby",
+    Callback = function()
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(-107, 152, 41)
+        end
+    end,
+})
+
+MM2AdvTab:CreateButton({
+    Name = "Teleport to Map Spawn",
+    Callback = function()
+        local map = getMap()
+        if map and map:FindFirstChild("Spawns") then
+            local spawns = map.Spawns:GetChildren()
+            if #spawns > 0 and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                local rnd = spawns[math.random(1, #spawns)]
+                LocalPlayer.Character.HumanoidRootPart.CFrame = rnd.CFrame + Vector3.new(0, 3, 0)
+            end
+        else
+            Rayfield:Notify({Title = "Error", Content = "Mapa no encontrado.", Duration = 3})
+        end
+    end,
+})
+
+MM2AdvTab:CreateButton({
+    Name = "Copy Murderer Username",
+    Callback = function()
+        local m = findMurderer()
+        if m and setclipboard then
+            setclipboard(m.Name)
+            Rayfield:Notify({Title = "Crimson Blade", Content = "Copiado: " .. m.Name, Duration = 3})
+        end
+    end,
+})
+
+MM2AdvTab:CreateButton({
+    Name = "Copy Sheriff Username",
+    Callback = function()
+        local s = findSheriff()
+        if s and setclipboard then
+            setclipboard(s.Name)
+            Rayfield:Notify({Title = "Crimson Blade", Content = "Copiado: " .. s.Name, Duration = 3})
+        end
+    end,
+})
+
+-- ==========================================================
+-- PESTAÑA: UNIVERSAL
+-- ==========================================================
+UniversalTab:CreateSection("movement & mechanics")
+
+UniversalTab:CreateToggle({
+    Name = "OP Fly Module",
+    Info = "Vuelo fluido y estabilizado.",
+    CurrentValue = false,
+    Flag = "FlyToggleFlag",
+    Callback = function(Value)
+        if Value then startFly() else stopFly() end
+    end,
+})
+
+UniversalTab:CreateSlider({
+    Name = "Fly Maximum Speed",
+    Range = {50, 350},
+    Increment = 10,
+    Suffix = " studs",
+    CurrentValue = 50,
+    Flag = "FlySpeedFlag",
+    Callback = function(Value) flyMaxSpeed = Value end,
+})
+
+UniversalTab:CreateSection("universal systems")
+
+UniversalTab:CreateToggle({
+    Name = "Anti-Fling Module",
+    Info = "Evita ser empujado o expulsado del mapa.",
+    CurrentValue = false,
+    Flag = "AntiFlingToggleFlag",
+    Callback = function(Value) antiFlingActive = Value end,
+})
+
+UniversalTab:CreateSection("player interaction")
+
+local currentlyViewing = 1
+
+UniversalTab:CreateButton({
+    Name = "Spectate Next Player",
+    Callback = function()
+        local listofplayers = Players:GetPlayers()
+        if #listofplayers <= 1 then return end
+        currentlyViewing = if currentlyViewing >= #listofplayers then 1 else currentlyViewing + 1
+        local currentPlayer = listofplayers[currentlyViewing]
+        if currentPlayer and currentPlayer.Character and currentPlayer.Character:FindFirstChildOfClass("Humanoid") then
+            Camera.CameraSubject = currentPlayer.Character:FindFirstChildOfClass("Humanoid")
+            Rayfield:Notify({Title = "Visuals Radar", Content = "Espectando a: " .. currentPlayer.Name, Duration = 2})
+        end
+    end,
+})
+
+UniversalTab:CreateButton({
+    Name = "Spectate Previous Player",
+    Callback = function()
+        local listofplayers = Players:GetPlayers()
+        if #listofplayers <= 1 then return end
+        currentlyViewing = if currentlyViewing <= 1 then #listofplayers else currentlyViewing - 1
+        local currentPlayer = listofplayers[currentlyViewing]
+        if currentPlayer and currentPlayer.Character and currentPlayer.Character:FindFirstChildOfClass("Humanoid") then
+            Camera.CameraSubject = currentPlayer.Character:FindFirstChildOfClass("Humanoid")
+            Rayfield:Notify({Title = "Visuals Radar", Content = "Espectando a: " .. currentPlayer.Name, Duration = 2})
+        end
+    end,
+})
+
+UniversalTab:CreateButton({
+    Name = "Stop Spectating Camera",
+    Callback = function()
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
+            Camera.CameraSubject = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            Rayfield:Notify({Title = "Visuals Radar", Content = "Espectador desactivado", Duration = 2})
+        end
+    end,
+})
+
 task.spawn(function()
     while task.wait(0.3) do
         pcall(function()
@@ -1063,7 +1507,6 @@ task.spawn(function()
                 table.clear(activeTrapHighlights)
             end
 
-            -- Anti-Fling Avanzado (Detección Angular y Lineal de Flínger)
             if antiFlingActive then
                 for _, pl in ipairs(Players:GetPlayers()) do
                     if pl ~= LocalPlayer and pl.Character and pl.Character.PrimaryPart then
@@ -1098,382 +1541,13 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
-    while task.wait(0.3) do
-        pcall(function()
-            if hitboxEnabled then
-                for _, v in pairs(Players:GetPlayers()) do
-                    if v ~= LocalPlayer and v.Character and v.Character:FindFirstChild("HumanoidRootPart") then
-                        local h = v.Character.HumanoidRootPart
-                        h.Size = Vector3.new(hitboxSizeValue, hitboxSizeValue, hitboxSizeValue)
-                        h.Transparency = 0.75
-                        h.Color = Color3.fromRGB(140, 20, 30)
-                        h.CanCollide = false
-                    end
-                end
-            end
-        end)
-    end
-end)
-
-RunService.Stepped:Connect(function() 
-    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then 
-        LocalPlayer.Character.Humanoid.WalkSpeed = targetSpeed 
-    end 
-end)
-
-LocalPlayer.Idled:Connect(function()
-    pcall(function()
-        VirtualUser:Button2Down(Vector2.new(0,0), Camera.CFrame)
-        task.wait(1)
-        VirtualUser:Button2Up(Vector2.new(0,0), Camera.CFrame)
-    end)
-end)
-
-Workspace.ChildRemoved:Connect(function(child)
-    if child:FindFirstChild("CoinContainer") or child:FindFirstChild("Spawns") then
-        resetRoundCombatStates()
-    end
-end)
-
 -- ==========================================================
--- INTERFAZ RAYFIELD CON ESTÉTICA PROFESIONAL
+-- PESTAÑA: PLAYER
 -- ==========================================================
-local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
-
-local globalRemotes = ReplicatedStorage:WaitForChild("Remotes", 5)
-if globalRemotes and globalRemotes:FindFirstChild("Gameplay") and globalRemotes.Gameplay:FindFirstChild("PlayerDataChanged") then
-	globalRemotes.Gameplay.PlayerDataChanged.OnClientEvent:Connect(function(data)
-		gamePlayerData = data
-        local hasMurd = false
-		for player, info in pairs(data) do
-			if info.Role == "Murderer" or info.Role == "Murder" then
-				cachedMurderer = Players:FindFirstChild(player)
-                hasMurd = true
-			end
-		end
-        if not hasMurd then
-            cachedMurderer = nil
-            resetRoundCombatStates()
-        end
-	end)
-end
-
-task.spawn(function()
-	while true do
-		if not cachedMurderer then
-			cachedMurderer = findMurderer()
-		end
-		task.wait(1)
-	end
-end)
-
-Rayfield.Theme.DarkCrimson = {
-    TextFont = "Gotham",
-    TextColor = Color3.fromRGB(240, 240, 240),
-    Background = Color3.fromRGB(8, 7, 7),
-    Topbar = Color3.fromRGB(12, 10, 11),
-    Shadow = Color3.fromRGB(0, 0, 0),
-    NotificationBackground = Color3.fromRGB(15, 12, 14),
-    NotificationActionsBackground = Color3.fromRGB(22, 16, 18),
-    TabBackground = Color3.fromRGB(14, 11, 13),
-    TabStroke = Color3.fromRGB(45, 15, 20),
-    TabBackgroundSelected = Color3.fromRGB(140, 20, 30),
-    TabTextColor = Color3.fromRGB(160, 150, 150),
-    SelectedTabTextColor = Color3.fromRGB(255, 255, 255),
-    ElementBackground = Color3.fromRGB(13, 10, 12),
-    ElementBackgroundHover = Color3.fromRGB(20, 14, 16),
-    SecondaryElementBackground = Color3.fromRGB(15, 12, 14),
-    ElementStroke = Color3.fromRGB(60, 20, 25),
-    SecondaryElementStroke = Color3.fromRGB(40, 15, 18),
-    ToggleBackground = Color3.fromRGB(10, 8, 8),
-    ToggleEnabled = Color3.fromRGB(180, 25, 35),
-    ToggleDisabled = Color3.fromRGB(10, 8, 8),
-    ToggleEnabledStroke = Color3.fromRGB(180, 25, 35),
-    ToggleDisabledStroke = Color3.fromRGB(35, 20, 20),
-    ToggleEnabledOuterStroke = Color3.fromRGB(180, 25, 35),
-    ToggleDisabledOuterStroke = Color3.fromRGB(35, 20, 20),
-    SliderBackground = Color3.fromRGB(8, 6, 6),
-    SliderProgress = Color3.fromRGB(180, 25, 35),
-    SliderStroke = Color3.fromRGB(180, 25, 35),
-    InputBackground = Color3.fromRGB(10, 8, 8),
-    InputStroke = Color3.fromRGB(35, 20, 20),
-    PlaceholderColor = Color3.fromRGB(100, 80, 80)
-}
-
-local Window = Rayfield:CreateWindow({
-    Name = "Crimson Blade",
-    LoadingTitle = "Executive Security Suite",
-    LoadingSubtitle = "High Precision Combat Engine",
-    Theme = "DarkCrimson",
-    DisableRayfieldPrompts = true,
-    ConfigurationSaving = { Enabled = false },
-    Discord = { Enabled = false }
-})
-
-task.spawn(function()
-    task.wait(1)
-    pcall(function()
-        if Window and Window.Keybind then Window.Keybind:Destroy() end
-        if Window.Main and Window.Main:FindFirstChild("Topbar") then
-            local topbar = Window.Main.Topbar
-            for _, child in ipairs(topbar:GetChildren()) do
-                if child.Name == "Search" or child.Name == "SearchButton" or child.Name == "Max" or child.Name == "Maximize" or child.Name == "Minimize" or child.Name == "Hide" then
-                    child:Destroy()
-                end
-            end
-        end
-    end)
-end)
-
--- [[ PESTAÑAS ESTRUCTURADAS ]]
-local MainTab      = Window:CreateTab("Combat", "swords")
-local ESPTab       = Window:CreateTab("Visuals", "eye")
-local MM2AdvTab    = Window:CreateTab("Ballistics", "crosshair")
-local UniversalTab = Window:CreateTab("Universal", "globe")
-local PlayerTab    = Window:CreateTab("Player", "user")
-local SettingsTab  = Window:CreateTab("Settings", "settings")
-
--- ==========================================================
--- PESTAÑA: COMBAT
--- ==========================================================
-MainTab:CreateSection("Mobile Overlay HUD")
-
-MainTab:CreateToggle({
-    Name = "Aimbot Toggle Button",
-    Info = "Draggable screen button to toggle Murderer target locking.",
-    CurrentValue = false,
-    Flag = "AimbotFloatButtonFlag",
-    Callback = function(Value) toggleAimbotButton(Value) end,
-})
-
-MainTab:CreateToggle({
-    Name = "Shoot Button Overlay",
-    Info = "Draggable screen button to execute Silent Aim at the Murderer.",
-    CurrentValue = false,
-    Flag = "GunButtonFlag",
-    Callback = function(Value) toggleGunButton(Value) end,
-})
-
-MainTab:CreateToggle({
-    Name = "Knife Throw Overlay",
-    Info = "Draggable screen button to throw or slash the closest enemy.",
-    CurrentValue = false,
-    Flag = "KnifeButtonFlag",
-    Callback = function(Value) toggleKnifeButton(Value) end,
-})
-
-MainTab:CreateSection("Target Acquisition")
-
-local RoleTrackerLabel = MainTab:CreateLabel("Scanning lobby roles...")
-task.spawn(function()
-    while task.wait(0.4) do
-        pcall(function()
-            local murderer = findMurderer()
-            local sh = findSheriff()
-            RoleTrackerLabel:Set("Murderer: " .. (murderer and murderer.Name or "Scanning...") .. " | Sheriff: " .. (sh and sh.Name or "Scanning..."))
-        end)
-    end
-end)
-
-MainTab:CreateToggle({
-    Name = "Torso Lock & Silent Aim",
-    Info = "Locks camera view onto Murderer's torso and calculates 3-axis ballistic intercept.",
-    CurrentValue = false,
-    Flag = "TargetLock",
-    Callback = function(Value) 
-        aimbotEnabled = Value 
-        updateAimbotButtonVisual()
-    end,
-})
-
-MainTab:CreateButton({
-    Name = "Shoot into Murderer",
-    Callback = function() runShootActionNATIVE() end,
-})
-
-MainTab:CreateButton({
-    Name = "Knife Throw to Closest",
-    Callback = function() runKnifeThrowActionNATIVE() end,
-})
-
-MainTab:CreateSection("Blatant & Elimination")
-
-MainTab:CreateToggle({
-    Name = "Auto-Pickup Dropped Gun",
-    Info = "Instantly retrieves dropped gun across map using Lay TP.",
-    CurrentValue = false,
-    Flag = "AutoPickupFlag",
-    Callback = function(Value) autoPickupEnabled = Value end,
-})
-
-MainTab:CreateToggle({
-    Name = "Murderer Kill Aura",
-    Info = "Automatically slashes any player within 7.5 studs proximity.",
-    CurrentValue = false,
-    Flag = "KillAuraFlag",
-    Callback = function(Value) toggleKillAura(Value) end,
-})
-
-MainTab:CreateButton({
-    Name = "Eliminate Everyone (Murderer)",
-    Callback = function() executeKillEveryone() end,
-})
-
-MainTab:CreateButton({
-    Name = "Fling Murderer",
-    Callback = function()
-        local m = findMurderer()
-        if m then executeFlingAction(m) else Rayfield:Notify({Title = "Error", Content = "Murderer not found in server.", Duration = 3}) end
-    end,
-})
-
-MainTab:CreateButton({
-    Name = "Fling Sheriff",
-    Callback = function()
-        local s = findSheriff()
-        if s then executeFlingAction(s) else Rayfield:Notify({Title = "Error", Content = "Sheriff not found in server.", Duration = 3}) end
-    end,
-})
-
--- ==========================================================
--- PESTAÑA: VISUALS (ESP)
--- ==========================================================
-ESPTab:CreateSection("Radar Systems")
-
-ESPTab:CreateToggle({
-    Name = "Player ESP",
-    Info = "Highlights Murderer (Red), Sheriff (Blue), and Innocents (Green).",
-    CurrentValue = false,
-    Flag = "ESPFlag",
-    Callback = function(Value)
-        if Value then startESP() else stopESP() end
-    end,
-})
-
-ESPTab:CreateToggle({
-    Name = "Dropped Gun ESP",
-    Info = "Shows position and distance of dropped sheriff weapon.",
-    CurrentValue = false,
-    Flag = "GunDropESPFlag",
-    Callback = function(Value)
-        gunDropESPActive = Value
-        updateGunDropESP()
-    end,
-})
-
-ESPTab:CreateToggle({
-    Name = "Traps ESP",
-    Info = "Highlights traps deployed by the Murderer.",
-    CurrentValue = false,
-    Flag = "TrapsESPFlag",
-    Callback = function(Value)
-        trapESPActive = Value
-        if not Value then
-            for _, h in pairs(activeTrapHighlights) do if h then h:Destroy() end end
-            table.clear(activeTrapHighlights)
-        else
-            updateTrapsESP()
-        end
-    end,
-})
-
-ESPTab:CreateSection("Filters")
-
-ESPTab:CreateToggle({
-    Name = "Hide Innocents",
-    Info = "Removes highlights from innocent players to reduce visual noise.",
-    CurrentValue = false,
-    Flag = "IgnoreInnocentsFlag",
-    Callback = function(Value) 
-        ignoreInnocents = Value
-        reloadESP()
-    end,
-})
-
--- ==========================================================
--- PESTAÑA: BALLISTICS (CALIBRACIÓN DE 3 EJES)
--- ==========================================================
-MM2AdvTab:CreateSection("Kinematic Calibration")
-
-MM2AdvTab:CreateSlider({
-    Name = "Prediction Offset Multiplier",
-    Range = {0.5, 5.0},
-    Increment = 0.1,
-    Suffix = "x",
-    CurrentValue = 2.8,
-    Flag = "ShootOffsetSlider",
-    Callback = function(Value) shootOffset = Value end,
-})
-
-MM2AdvTab:CreateSlider({
-    Name = "Latency (Ping) Multiplier",
-    Range = {0.5, 3.0},
-    Increment = 0.1,
-    Suffix = "x",
-    CurrentValue = 1.0,
-    Flag = "PingMultSlider",
-    Callback = function(Value) offsetToPingMult = Value end,
-})
-
-MM2AdvTab:CreateToggle({
-    Name = "Auto-Shoot Murderer (Line of Sight)",
-    Info = "Automatically fires at the Murderer when physical visibility ray succeeds.",
-    CurrentValue = false,
-    Flag = "AutoShootAdvFlag",
-    Callback = function(Value) autoShootMurderer = Value end,
-})
-
-MM2AdvTab:CreateToggle({
-    Name = "Instakill Injector Mode",
-    Info = "Forces direct damage injection into Murderer torso CFrame.",
-    CurrentValue = false,
-    Flag = "InstakillFlag",
-    Callback = function(Value) instakillshoot = Value end,
-})
-
--- ==========================================================
--- PESTAÑA: UNIVERSAL (MOVEMENT & SYSTEMS)
--- ==========================================================
-UniversalTab:CreateSection("Flight Controls")
-
-UniversalTab:CreateToggle({
-    Name = "Stabilized OP Flight",
-    Info = "Smooth and responsive mobile flight engine.",
-    CurrentValue = false,
-    Flag = "FlyToggleFlag",
-    Callback = function(Value)
-        if Value then startFly() else stopFly() end
-    end,
-})
-
-UniversalTab:CreateSlider({
-    Name = "Flight Speed",
-    Range = {50, 350},
-    Increment = 10,
-    Suffix = " studs",
-    CurrentValue = 50,
-    Flag = "FlySpeedFlag",
-    Callback = function(Value) flyMaxSpeed = Value end,
-})
-
-UniversalTab:CreateSection("Protection Systems")
-
-UniversalTab:CreateToggle({
-    Name = "Anti-Fling Defense",
-    Info = "Continuous physics stabilizer against external velocity exploits.",
-    CurrentValue = false,
-    Flag = "AntiFlingToggleFlag",
-    Callback = function(Value) antiFlingActive = Value end,
-})
-
--- ==========================================================
--- PESTAÑA: PLAYER (MODS & HITBOXES)
--- ==========================================================
-PlayerTab:CreateSection("Character Enhancements")
+PlayerTab:CreateSection("player mods")
 
 PlayerTab:CreateSlider({
-    Name = "WalkSpeed Multiplier",
+    Name = "WalkSpeed",
     Range = {16, 120},
     Increment = 1,
     Suffix = " studs",
@@ -1482,9 +1556,15 @@ PlayerTab:CreateSlider({
     Callback = function(Value) targetSpeed = Value end,
 })
 
+RunService.Stepped:Connect(function() 
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then 
+        LocalPlayer.Character.Humanoid.WalkSpeed = targetSpeed 
+    end 
+end)
+
 PlayerTab:CreateToggle({
-    Name = "Noclip & AirWalk",
-    Info = "Bypasses part collisions and generates responsive air platform.",
+    Name = "Noclip",
+    Info = "Atraviesa paredes y camina por el aire.",
     CurrentValue = false,
     Flag = "AirWalkToggle",
     Callback = function(Value)
@@ -1493,15 +1573,13 @@ PlayerTab:CreateToggle({
             noclipConnection = RunService.Stepped:Connect(function()
                 if LocalPlayer.Character then
                     for _, child in ipairs(LocalPlayer.Character:GetDescendants()) do
-                        if child:IsA("BasePart") then
-                            child.CanCollide = false
-                        end
+                        if child:IsA("BasePart") then child.CanCollide = false end
                     end
                 end
             end)
             
             airWalkPlatform = Instance.new("Part")
-            airWalkPlatform.Name = "Executive_AirWalk_Platform"
+            airWalkPlatform.Name = "AirWalkPlatform"
             airWalkPlatform.Size = Vector3.new(4, 1, 4)
             airWalkPlatform.Transparency = 1
             airWalkPlatform.Anchored = true
@@ -1514,6 +1592,7 @@ PlayerTab:CreateToggle({
             airWalkConnection = RunService.RenderStepped:Connect(function()
                 if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
                     local hrp = LocalPlayer.Character.HumanoidRootPart
+                    
                     if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
                         currentAirWalkHeight = currentAirWalkHeight + 0.5
                     end
@@ -1524,6 +1603,7 @@ PlayerTab:CreateToggle({
                     local finalY = currentAirWalkHeight
                     if hrp.Position.Y - 3.5 < finalY then finalY = hrp.Position.Y - 3.5 end
                     if finalY < -50 then finalY = -50 end
+                    
                     airWalkPlatform.Position = Vector3.new(hrp.Position.X, finalY, hrp.Position.Z)
                 end
             end)
@@ -1535,11 +1615,11 @@ PlayerTab:CreateToggle({
     end,
 })
 
-PlayerTab:CreateSection("Hitbox Expansion")
+PlayerTab:CreateSection("hitbox expander")
 
 PlayerTab:CreateToggle({
-    Name = "Expand Enemy Hitboxes",
-    Info = "Expands torso dimensions of all enemies to guarantee hits.",
+    Name = "Hitbox Expander",
+    Info = "Expande el torso de los demás jugadores.",
     CurrentValue = false,
     Flag = "HitboxExpanderFlag",
     Callback = function(Value)
@@ -1558,11 +1638,29 @@ PlayerTab:CreateSlider({
     Callback = function(Value) hitboxSizeValue = Value end,
 })
 
-PlayerTab:CreateSection("Targeted Fling")
+task.spawn(function()
+    while task.wait(0.3) do
+        pcall(function()
+            if hitboxEnabled then
+                for _, v in pairs(Players:GetPlayers()) do
+                    if v ~= LocalPlayer and v.Character and v.Character:FindFirstChild("HumanoidRootPart") then
+                        local h = v.Character.HumanoidRootPart
+                        h.Size = Vector3.new(hitboxSizeValue, hitboxSizeValue, hitboxSizeValue)
+                        h.Transparency = 0.75
+                        h.Color = Color3.fromRGB(140, 20, 30)
+                        h.CanCollide = false
+                    end
+                end
+            end
+        end)
+    end
+end)
+
+PlayerTab:CreateSection("fling target")
 
 PlayerTab:CreateInput({
-    Name = "Target Username",
-    PlaceholderText = "Enter player name...",
+    Name = "Target Player",
+    PlaceholderText = "Escribe el nombre del rival...",
     CharactersLimit = 30,
     OnEnter = false,
     Flag = "FlingInputFlag",
@@ -1570,28 +1668,24 @@ PlayerTab:CreateInput({
 })
 
 PlayerTab:CreateButton({
-    Name = "Execute Target Fling",
+    Name = "Fling Player",
     Callback = function()
         local target = getPlayerByName(getgenv().targetPlayerInputText)
-        if target then 
-            executeFlingAction(target) 
-        else 
-            Rayfield:Notify({Title = "Error", Content = "Target player not found in server.", Duration = 3}) 
-        end
+        if target then executeFlingAction(target) else Rayfield:Notify({Title = "Error", Content = "Rival no encontrado.", Duration = 3}) end
     end,
 })
 
 -- ==========================================================
--- PESTAÑA: SETTINGS (NETWORK & CONTROL)
+-- PESTAÑA: SETTINGS
 -- ==========================================================
-SettingsTab:CreateSection("Network Telemetry")
+SettingsTab:CreateSection("server network")
 
-local PingLabel = SettingsTab:CreateLabel("Ping: Calculating...")
+local PingLabel = SettingsTab:CreateLabel("ping: calculando...")
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
             local pingVal = math.round(LocalPlayer:GetNetworkPing() * 1000)
-            PingLabel:Set("Network Latency: " .. pingVal .. " ms")
+            PingLabel:Set("latencia de red: " .. pingVal .. " ms")
         end)
     end
 end)
@@ -1603,6 +1697,7 @@ SettingsTab:CreateButton({
             local serversUrl = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
             local rawData = game:HttpGet(serversUrl)
             local parsed = HttpService:JSONDecode(rawData)
+            
             for _, s in ipairs(parsed.data) do
                 if s.playing < s.maxPlayers and s.id ~= game.JobId then
                     TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, LocalPlayer)
@@ -1614,31 +1709,28 @@ SettingsTab:CreateButton({
 })
 
 SettingsTab:CreateButton({
-    Name = "Rejoin Server",
-    Callback = function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer) end
+    Name = "Rejoin",
+    Callback = function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer) end,
 })
 
-SettingsTab:CreateSection("Executive Controls")
+SettingsTab:CreateSection("hub control")
 
 SettingsTab:CreateButton({
-    Name = "Unload Suite",
+    Name = "Unload Script",
     Callback = function()
         aimbotEnabled = false
         autoPickupEnabled = false
         autoShootMurderer = false
-        killAuraEnabled = false
+        killClosestEnabled = false
         antiFlingActive = false
         hitboxEnabled = false
         airWalkEnabled = false
         stopFly()
         stopESP()
-        
         toggleGunButton(false)
         toggleKnifeButton(false)
-        toggleAimbotButton(false)
         
         if aimbotConn then aimbotConn:Disconnect() end
-        if killAuraConn then killAuraConn:Disconnect() end
         if noclipConnection then noclipConnection:Disconnect() end
         if airWalkConnection then airWalkConnection:Disconnect() end
         if airWalkPlatform then airWalkPlatform:Destroy() end
@@ -1650,6 +1742,7 @@ SettingsTab:CreateButton({
 
 Rayfield:Notify({
     Title = "Crimson Blade",
-    Content = "Executive MM2 Suite successfully initialized.",
-    Duration = 4
+    Content = "Kinematic Ballistics & Silent Aim cargado con éxito.",
+    Duration = 4,
+    Image = 10843394625
 })
