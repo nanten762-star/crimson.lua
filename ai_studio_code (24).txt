@@ -1,0 +1,327 @@
+-- [[ MM2 ADVANCED KINEMATIC HUB (DELTA OPTIMIZED) ]] --
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local Camera = Workspace.CurrentCamera
+
+-- Limpiar interfaz anterior si ya estaba abierta
+if CoreGui:FindFirstChild("MM2AdvancedHub") then
+    CoreGui.MM2AdvancedHub:Destroy()
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MM2AdvancedHub"
+ScreenGui.Parent = CoreGui
+ScreenGui.ResetOnSpawn = false
+
+-- [[ INTERFAZ GRÁFICA (UI) ]] --
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 340, 0, 400)
+MainFrame.Position = UDim2.new(0.5, -170, 0.5, -200)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 10)
+UICorner.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 45)
+Title.BackgroundTransparency = 1
+Title.Text = "MM2 Kinematic & Aim Hub"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 16
+Title.Font = Enum.Font.GothamBold
+Title.Parent = MainFrame
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Position = UDim2.new(1, -38, 0, 7)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseBtn.TextSize = 14
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.Parent = MainFrame
+
+local CloseCorner = Instance.new("UICorner")
+CloseCorner.CornerRadius = UDim.new(0, 6)
+CloseCorner.Parent = CloseBtn
+
+local Container = Instance.new("ScrollingFrame")
+Container.Size = UDim2.new(1, -20, 1, -60)
+Container.Position = UDim2.new(0, 10, 0, 50)
+Container.BackgroundTransparency = 1
+Container.CanvasSize = UDim2.new(0, 0, 0, 350)
+Container.ScrollBarThickness = 4
+Container.Parent = MainFrame
+
+local UIList = Instance.new("UIListLayout")
+UIList.Padding = UDim.new(0, 10)
+UIList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+UIList.Parent = Container
+
+-- Botón Flotante para reabrir
+local OpenBtn = Instance.new("TextButton")
+OpenBtn.Size = UDim2.new(0, 50, 0, 50)
+OpenBtn.Position = UDim2.new(0, 20, 0.5, -25)
+OpenBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+OpenBtn.Text = "MM2"
+OpenBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+OpenBtn.TextSize = 12
+OpenBtn.Font = Enum.Font.GothamBold
+OpenBtn.Visible = false
+OpenBtn.Parent = ScreenGui
+
+local OpenCorner = Instance.new("UICorner")
+OpenCorner.CornerRadius = UDim.new(1, 0)
+OpenCorner.Parent = OpenBtn
+
+CloseBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = false
+    OpenBtn.Visible = true
+end)
+
+OpenBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = true
+    OpenBtn.Visible = false
+end)
+
+-- Creador de Interruptores (Toggles)
+local function CreateToggle(name, callback)
+    local ToggleBtn = Instance.new("TextButton")
+    ToggleBtn.Size = UDim2.new(1, 0, 0, 45)
+    ToggleBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    ToggleBtn.Text = "  " .. name .. ": [ OFF ]"
+    ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ToggleBtn.TextSize, ToggleBtn.TextXAlignment = 14, Enum.TextXAlignment.Left
+    ToggleBtn.Font = Enum.Font.Gotham
+    ToggleBtn.Parent = Container
+    
+    local TCorner = Instance.new("UICorner")
+    TCorner.CornerRadius = UDim.new(0, 8)
+    TCorner.Parent = ToggleBtn
+    
+    local state = false
+    ToggleBtn.MouseButton1Click:Connect(function()
+        state = not state
+        if state then
+            ToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 160, 100)
+            ToggleBtn.Text = "  " .. name .. ": [ ON ]"
+        else
+            ToggleBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+            ToggleBtn.Text = "  " .. name .. ": [ OFF ]"
+        end
+        pcall(function()
+            callback(state)
+        end)
+    end)
+end
+
+-- [[ LÓGICA AUXILIAR Y FUNCIONES DE BÚSQUEDA ]] --
+local function findMurderer()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and (p.Backpack:FindFirstChild("Knife") or (p.Character and p.Character:FindFirstChild("Knife"))) then
+            return p
+        end
+    end
+    return nil
+end
+
+local function findNearestPlayer()
+    local nearest, shortest = nil, math.huge
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if myRoot then
+                local dist = (myRoot.Position - p.Character.HumanoidRootPart.Position).Magnitude
+                if dist < shortest then
+                    shortest = dist
+                    nearest = p
+                end
+            end
+        end
+    end
+    return nearest
+end
+
+-- [[ 1. MOTOR CINEMÁTICO BALÍSTICO ]] --
+local function getKinematicTrajectory(targetPlayer, originPos, projectileSpeed, applyGravityDrop)
+    if not targetPlayer or not targetPlayer.Character then return nil end
+
+    local char = targetPlayer.Character
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or root
+    local hum = char:FindFirstChildOfClass("Humanoid")
+
+    if not root or not torso or not hum or hum.Health <= 0 then return nil end
+
+    local ping = LocalPlayer:GetNetworkPing()
+    local targetPos = torso.Position
+    local velocity = root.AssemblyLinearVelocity
+    local moveDir = hum.MoveDirection
+    local walkSpeed = hum.WalkSpeed
+    local gravity = Workspace.Gravity
+
+    local horizontalVel
+    if moveDir.Magnitude > 0.05 then
+        local currentHorizontalMag = Vector2.new(velocity.X, velocity.Z).Magnitude
+        local speedMag = math.max(currentHorizontalMag, walkSpeed)
+        horizontalVel = Vector3.new(moveDir.X, 0, moveDir.Z).Unit * speedMag
+    else
+        horizontalVel = Vector3.new(velocity.X, 0, velocity.Z)
+    end
+
+    local verticalVel = velocity.Y
+    local inAir = (hum.FloorMaterial == Enum.Material.Air) or (math.abs(verticalVel) > 0.5)
+
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    rayParams.FilterDescendantsInstances = {char, LocalPlayer.Character}
+    rayParams.IgnoreWater = true
+
+    local predictedPos = targetPos
+    local timeToHit = ping + ((targetPos - originPos).Magnitude / projectileSpeed)
+
+    for _ = 1, 3 do
+        local predX = targetPos.X + (horizontalVel.X * timeToHit)
+        local predZ = targetPos.Z + (horizontalVel.Z * timeToHit)
+        local predY = targetPos.Y
+
+        if inAir then
+            predY = targetPos.Y + (verticalVel * timeToHit) - (0.5 * gravity * (timeToHit ^ 2))
+            local ceilRay = Workspace:Raycast(Vector3.new(predX, targetPos.Y, predZ), Vector3.new(0, 10, 0), rayParams)
+            if ceilRay and predY > ceilRay.Position.Y - 1 then
+                predY = ceilRay.Position.Y - 1
+            end
+            local floorRay = Workspace:Raycast(Vector3.new(predX, targetPos.Y + 5, predZ), Vector3.new(0, -50, 0), rayParams)
+            if floorRay and predY < floorRay.Position.Y + 1.5 then
+                predY = floorRay.Position.Y + 1.5
+            end
+        end
+
+        if applyGravityDrop then
+            local dropCompensation = 0.5 * gravity * (timeToHit ^ 2) * 0.45
+            predY = predY + dropCompensation
+        end
+
+        predictedPos = Vector3.new(predX, predY, predZ)
+        timeToHit = ping + ((predictedPos - originPos).Magnitude / projectileSpeed)
+    end
+
+    return predictedPos
+end
+
+-- [[ 2. SILENT AIM (PISTOLA) ]] --
+local silentAimEnabled = false
+local useFOVCheck = false
+local silentAimFOV = 150
+
+local function isTargetWithinFOV(targetWorldPos, maxFOVRadius)
+    local screenPos, onScreen = Camera:WorldToViewportPoint(targetWorldPos)
+    if not onScreen then return false end
+    local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    local pointerPos = UserInputService.TouchEnabled and screenCenter or UserInputService:GetMouseLocation()
+    local dist = (Vector2.new(screenPos.X, screenPos.Y) - pointerPos).Magnitude
+    return dist <= maxFOVRadius
+end
+
+if hookmetamethod then
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+
+        if not checkcaller() and silentAimEnabled and method == "FireServer" and tostring(self) == "Shoot" then
+            local gun = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Gun")
+            if gun and self.Parent == gun then
+                local murderer = findMurderer()
+                if murderer and murderer.Character then
+                    local targetTorso = murderer.Character:FindFirstChild("UpperTorso") or murderer.Character:FindFirstChild("HumanoidRootPart")
+                    local hand = LocalPlayer.Character:FindFirstChild("RightHand") or LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+
+                    if targetTorso and hand then
+                        local origin = hand.Position
+                        if not useFOVCheck or isTargetWithinFOV(targetTorso.Position, silentAimFOV) then
+                            local rayParams = RaycastParams.new()
+                            rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                            rayParams.FilterDescendantsInstances = {LocalPlayer.Character, murderer.Character}
+                            
+                            local wallCheck = Workspace:Raycast(origin, (targetTorso.Position - origin), rayParams)
+                            if not (wallCheck and wallCheck.Instance and wallCheck.Instance.CanCollide) then
+                                local targetPos = getKinematicTrajectory(murderer, origin, 1000, false)
+                                if targetPos then
+                                    args[1] = CFrame.new(origin)
+                                    args[2] = CFrame.new(targetPos)
+                                    return oldNamecall(self, unpack(args))
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return oldNamecall(self, ...)
+    end))
+end
+
+CreateToggle("Silent Aim (Pistola)", function(state)
+    silentAimEnabled = state
+end)
+
+-- [[ 3. KNIFE THROW AUTOMÁTICO ]] --
+local function executePerfectKnifeThrow()
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local knife = char:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
+    if not knife then return end
+
+    if knife.Parent == backpack then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then hum:EquipTool(knife) end
+        task.wait(0.05)
+    end
+
+    local target = findNearestPlayer()
+    if not target or not target.Character then return end
+
+    local myHand = char:FindFirstChild("RightHand") or char:FindFirstChild("HumanoidRootPart")
+    if not myHand then return end
+
+    local origin = myHand.Position
+    local predictedPos = getKinematicTrajectory(target, origin, 150, true)
+    if not predictedPos then return end
+
+    local throwRemote = knife:FindFirstChild("KnifeThrown", true) or knife:FindFirstChild("Throw", true)
+    if throwRemote and throwRemote:IsA("RemoteEvent") then
+        pcall(function()
+            throwRemote:FireServer(
+                CFrame.new(origin),
+                CFrame.new(predictedPos)
+            )
+        end)
+    end
+end
+
+local autoKnifeActive = false
+CreateToggle("Auto Knife Throw", function(state)
+    autoKnifeActive = state
+    task.spawn(function()
+        while autoKnifeActive do
+            task.wait(0.5)
+            pcall(function()
+                executePerfectKnifeThrow()
+            end)
+        end
+    end)
+end)
+
+print("¡Hub Cinemático Avanzado cargado correctamente!")
