@@ -1,0 +1,735 @@
+-- ============================================================================
+-- OBSIDIAN HUD // ULTRA-COMPACT STEALTH FRAMEWORK
+-- ============================================================================
+
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- ----------------------------------------------------------------------------
+-- 1. CONTENEDOR SEGURO ANTI-DETECCIÓN
+-- ----------------------------------------------------------------------------
+local function GetSafeContainer(): Instance
+	if typeof(gethui) == "function" then
+		local s, res = pcall(gethui)
+		if s and res then return res end
+	end
+	local s, coreGui = pcall(function() return game:GetService("CoreGui") end)
+	if s and coreGui then return coreGui end
+	return LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local PARENT = GetSafeContainer()
+local OLD_UI = PARENT:FindFirstChild("ObsidianStealthHub")
+if OLD_UI then OLD_UI:Destroy() end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "ObsidianStealthHub"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = PARENT
+
+-- ----------------------------------------------------------------------------
+-- 2. MOTOR MATEMÁTICO DE RESORTES (ANALYTIC SPRING ENGINE)
+-- ----------------------------------------------------------------------------
+local Spring = {}
+Spring.__index = Spring
+
+function Spring.new(mass, damping, constant, initial)
+	local self = setmetatable({
+		Mass = mass or 1,
+		Damping = damping or 20,
+		Constant = constant or 140,
+		Value = initial or 0,
+		Target = initial or 0,
+		Velocity = 0,
+		StartTick = os.clock()
+	}, Spring)
+	return self
+end
+
+function Spring:Update(dt)
+	-- Integración física armónica
+	local diff = self.Value - self.Target
+	local springForce = -self.Constant * diff
+	local dampingForce = -self.Damping * self.Velocity
+	local accel = (springForce + dampingForce) / self.Mass
+
+	self.Velocity = self.Velocity + accel * dt
+	self.Value = self.Value + self.Velocity * dt
+	return self.Value
+end
+
+function Spring:SetTarget(target)
+	self.Target = target
+end
+
+-- ----------------------------------------------------------------------------
+-- 3. TEMA VISUAL (DARK OBSIDIAN & CYBER EMERALD)
+-- ----------------------------------------------------------------------------
+local THEME = {
+	Background = Color3.fromRGB(10, 11, 14),
+	Sidebar    = Color3.fromRGB(6, 7, 9),
+	Card       = Color3.fromRGB(18, 20, 26),
+	CardActive = Color3.fromRGB(24, 27, 36),
+	Accent     = Color3.fromRGB(0, 255, 163), -- Verde Esmeralda Neón
+	Text       = Color3.fromRGB(245, 245, 250),
+	TextDark   = Color3.fromRGB(130, 135, 150),
+	Border     = Color3.fromRGB(30, 34, 44)
+}
+
+-- ----------------------------------------------------------------------------
+-- 4. CONSTRUCCIÓN DE LA INTERFAZ (COMPACTA: 400x240)
+-- ----------------------------------------------------------------------------
+local MENU_SIZE = Vector2.new(400, 240)
+local screenCenter = Camera.ViewportSize * 0.5
+
+-- Ventana Principal
+local MainFrame = Instance.new("CanvasGroup")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.fromOffset(MENU_SIZE.X, MENU_SIZE.Y)
+MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+MainFrame.Position = UDim2.fromOffset(screenCenter.X, screenCenter.Y)
+MainFrame.BackgroundColor3 = THEME.Background
+MainFrame.GroupTransparency = 0
+MainFrame.Parent = ScreenGui
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 12)
+MainCorner.Parent = MainFrame
+
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Thickness = 1.2
+MainStroke.Color = THEME.Border
+MainStroke.Parent = MainFrame
+
+-- Barra Superior / Píldora de Minimizado (CloseArea)
+local Header = Instance.new("Frame")
+Header.Name = "Header"
+Header.Size = UDim2.new(1, 0, 0, 30)
+Header.BackgroundTransparency = 1
+Header.Parent = MainFrame
+
+local ClosePill = Instance.new("TextButton")
+ClosePill.Name = "ClosePill"
+ClosePill.Size = UDim2.new(0, 40, 0, 4)
+ClosePill.Position = UDim2.new(0.5, -20, 0, 5)
+ClosePill.BackgroundColor3 = THEME.TextDark
+ClosePill.Text = ""
+ClosePill.AutoButtonColor = false
+ClosePill.Parent = Header
+
+local PillCorner = Instance.new("UICorner")
+PillCorner.CornerRadius = UDim.new(1, 0)
+PillCorner.Parent = ClosePill
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -20, 0, 16)
+Title.Position = UDim2.new(0, 12, 0, 12)
+Title.BackgroundTransparency = 1
+Title.Text = "OBSIDIAN // COMPACT"
+Title.TextColor3 = THEME.Text
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 11
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Parent = Header
+
+-- Contenedor del Cuerpo (Sidebar 30% / Content 70%)
+local Body = Instance.new("Frame")
+Body.Name = "Body"
+Body.Size = UDim2.new(1, 0, 1, -34)
+Body.Position = UDim2.new(0, 0, 0, 34)
+Body.BackgroundTransparency = 1
+Body.Parent = MainFrame
+
+-- Sidebar Izquierda
+local Sidebar = Instance.new("ScrollingFrame")
+Sidebar.Name = "Sidebar"
+Sidebar.Size = UDim2.new(0.30, 0, 1, 0)
+Sidebar.BackgroundColor3 = THEME.Sidebar
+Sidebar.BorderSizePixel = 0
+Sidebar.ScrollBarThickness = 0
+Sidebar.CanvasSize = UDim2.new(0, 0, 0, 0)
+Sidebar.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Sidebar.Parent = Body
+
+local SideLayout = Instance.new("UIListLayout")
+SideLayout.Padding = UDim.new(0, 4)
+SideLayout.SortOrder = Enum.SortOrder.LayoutOrder
+SideLayout.Parent = Sidebar
+
+local SidePad = Instance.new("UIPadding")
+SidePad.PaddingTop = UDim.new(0, 6)
+SidePad.PaddingLeft = UDim.new(0, 6)
+SidePad.PaddingRight = UDim.new(0, 6)
+SidePad.PaddingBottom = UDim.new(0, 6)
+SidePad.Parent = Sidebar
+
+-- Área de Contenido Derecha
+local Content = Instance.new("ScrollingFrame")
+Content.Name = "Content"
+Content.Size = UDim2.new(0.70, 0, 1, 0)
+Content.Position = UDim2.new(0.30, 0, 0, 0)
+Content.BackgroundTransparency = 1
+Content.BorderSizePixel = 0
+Content.ScrollBarThickness = 2
+Content.ScrollBarImageColor3 = THEME.Accent
+Content.CanvasSize = UDim2.new(0, 0, 0, 0)
+Content.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Content.Parent = Body
+
+local ContentPad = Instance.new("UIPadding")
+ContentPad.PaddingTop = UDim.new(0, 6)
+ContentPad.PaddingLeft = UDim.new(0, 8)
+ContentPad.PaddingRight = UDim.new(0, 8)
+ContentPad.PaddingBottom = UDim.new(0, 8)
+ContentPad.Parent = Content
+
+local ContentLayout = Instance.new("UIListLayout")
+ContentLayout.Padding = UDim.new(0, 6)
+ContentLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ContentLayout.Parent = Content
+
+-- Botón Flotante Minimizado (52x52 px)
+local FloatBubble = Instance.new("CanvasGroup")
+FloatBubble.Name = "FloatBubble"
+FloatBubble.Size = UDim2.fromOffset(52, 52)
+FloatBubble.AnchorPoint = Vector2.new(0.5, 0.5)
+FloatBubble.Position = UDim2.fromOffset(80, screenCenter.Y)
+FloatBubble.BackgroundColor3 = THEME.Background
+FloatBubble.Visible = false
+FloatBubble.GroupTransparency = 1
+FloatBubble.Parent = ScreenGui
+
+local BubbleCorner = Instance.new("UICorner")
+BubbleCorner.CornerRadius = UDim.new(1, 0)
+BubbleCorner.Parent = FloatBubble
+
+local BubbleStroke = Instance.new("UIStroke")
+BubbleStroke.Thickness = 1.5
+BubbleStroke.Color = THEME.Accent
+BubbleStroke.Parent = FloatBubble
+
+local BubbleIcon = Instance.new("TextLabel")
+BubbleIcon.Size = UDim2.new(1, 0, 1, 0)
+BubbleIcon.BackgroundTransparency = 1
+BubbleIcon.Text = "◆"
+BubbleIcon.TextColor3 = THEME.Accent
+BubbleIcon.Font = Enum.Font.GothamBold
+BubbleIcon.TextSize = 18
+BubbleIcon.Parent = FloatBubble
+
+-- Contenedor de Notificaciones (Toasts)
+local NotifContainer = Instance.new("Frame")
+NotifContainer.Name = "Notifications"
+NotifContainer.Size = UDim2.new(0, 220, 1, -20)
+NotifContainer.Position = UDim2.new(1, -230, 0, 10)
+NotifContainer.BackgroundTransparency = 1
+NotifContainer.Parent = ScreenGui
+
+local NotifLayout = Instance.new("UIListLayout")
+NotifLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+NotifLayout.Padding = UDim.new(0, 6)
+NotifLayout.Parent = NotifContainer
+
+-- ----------------------------------------------------------------------------
+-- 5. FÍSICAS DE RESORTES (SPRINGS) & PARALLAX
+-- ----------------------------------------------------------------------------
+local PosXSpring = Spring.new(1.0, 22, 160, screenCenter.X)
+local PosYSpring = Spring.new(1.0, 22, 160, screenCenter.Y)
+local ScaleSpring = Spring.new(1.0, 24, 180, 1.0)
+local TiltSpring  = Spring.new(0.7, 18, 140, 0)
+
+local isDraggingMenu = false
+local dragStartMouse = Vector2.zero
+local dragStartTarget = Vector2.zero
+local lastMousePos = Vector2.zero
+local parallaxOffset = Vector2.zero
+local baseCameraLook = Camera.CFrame.LookVector
+local isMinimized = false
+
+Header.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		isDraggingMenu = true
+		dragStartMouse = Vector2.new(input.Position.X, input.Position.Y)
+		dragStartTarget = Vector2.new(PosXSpring.Target, PosYSpring.Target)
+		lastMousePos = dragStartMouse
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if isDraggingMenu and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local currentMouse = Vector2.new(input.Position.X, input.Position.Y)
+		local delta = currentMouse - dragStartMouse
+		local velocityX = currentMouse.X - lastMousePos.X
+		lastMousePos = currentMouse
+
+		-- Inclinación física basada en la velocidad de arrastre
+		TiltSpring:SetTarget(math.clamp(-velocityX * 0.6, -10, 10))
+
+		local targetX = math.clamp(dragStartTarget.X + delta.X, MENU_SIZE.X * 0.5, Camera.ViewportSize.X - (MENU_SIZE.X * 0.5))
+		local targetY = math.clamp(dragStartTarget.Y + delta.Y, MENU_SIZE.Y * 0.5, Camera.ViewportSize.Y - (MENU_SIZE.Y * 0.5))
+		PosXSpring:SetTarget(targetX)
+		PosYSpring:SetTarget(targetY)
+	end
+end)
+
+local function EndMenuDrag()
+	if isDraggingMenu then
+		isDraggingMenu = false
+		TiltSpring:SetTarget(0) -- Vuelve al ángulo recto con rebote suave
+	end
+end
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		EndMenuDrag()
+	end
+end)
+
+-- Bucle de render: Actualización por frame de resortes y Parallax
+RunService.RenderStepped:Connect(function(dt)
+	if not isMinimized and MainFrame.Visible then
+		local currentLook = Camera.CFrame.LookVector
+		local deltaX = (currentLook.X - baseCameraLook.X) * 16
+		local deltaY = (currentLook.Y - baseCameraLook.Y) * 16
+		parallaxOffset = parallaxOffset:Lerp(Vector2.new(deltaX, deltaY), 0.12)
+
+		local px = PosXSpring:Update(dt) + parallaxOffset.X
+		local py = PosYSpring:Update(dt) + parallaxOffset.Y
+		local s = ScaleSpring:Update(dt)
+		local rot = TiltSpring:Update(dt)
+
+		MainFrame.Position = UDim2.fromOffset(px, py)
+		MainFrame.Size = UDim2.fromOffset(MENU_SIZE.X * s, MENU_SIZE.Y * s)
+		MainFrame.Rotation = rot
+	end
+end)
+
+-- ----------------------------------------------------------------------------
+-- 6. SISTEMA DE NOTIFICACIONES FLUIDAS
+-- ----------------------------------------------------------------------------
+local function Notify(text: string, duration: number?)
+	duration = duration or 3
+	local toast = Instance.new("Frame")
+	toast.Size = UDim2.new(1, 0, 0, 32)
+	toast.BackgroundColor3 = THEME.Card
+	toast.BackgroundTransparency = 1
+	toast.Parent = NotifContainer
+
+	local toastCorner = Instance.new("UICorner")
+	toastCorner.CornerRadius = UDim.new(0, 8)
+	toastCorner.Parent = toast
+
+	local toastStroke = Instance.new("UIStroke")
+	toastStroke.Thickness = 1
+	toastStroke.Color = THEME.Accent
+	toastStroke.Transparency = 1
+	toastStroke.Parent = toast
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, -16, 1, 0)
+	label.Position = UDim2.new(0, 10, 0, 0)
+	label.BackgroundTransparency = 1
+	label.Text = text
+	label.TextColor3 = THEME.Text
+	label.Font = Enum.Font.GothamMedium
+	label.TextSize = 11
+	label.TextTransparency = 1
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = toast
+
+	TweenService:Create(toast, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { BackgroundTransparency = 0 }):Play()
+	TweenService:Create(toastStroke, TweenInfo.new(0.3), { Transparency = 0.4 }):Play()
+	TweenService:Create(label, TweenInfo.new(0.3), { TextTransparency = 0 }):Play()
+
+	task.delay(duration, function()
+		local closeTween = TweenService:Create(toast, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			BackgroundTransparency = 1,
+			Size = UDim2.new(1, 0, 0, 0)
+		})
+		TweenService:Create(toastStroke, TweenInfo.new(0.2), { Transparency = 1 }):Play()
+		TweenService:Create(label, TweenInfo.new(0.2), { TextTransparency = 1 }):Play()
+		closeTween:Play()
+		closeTween.Completed:Connect(function() toast:Destroy() end)
+	end)
+end
+
+-- ----------------------------------------------------------------------------
+-- 7. MINIMIZADO ELÁSTICO & BURBUJA CON INERCIA
+-- ----------------------------------------------------------------------------
+local function SetMinimizedState(minimize: boolean)
+	isMinimized = minimize
+	if minimize then
+		ScaleSpring:SetTarget(0)
+		task.wait(0.2)
+		MainFrame.Visible = false
+
+		FloatBubble.Visible = true
+		FloatBubble.GroupTransparency = 0
+		FloatBubble.Size = UDim2.fromOffset(0, 0)
+		TweenService:Create(FloatBubble, TweenInfo.new(0.4, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out), {
+			Size = UDim2.fromOffset(52, 52)
+		}):Play()
+	else
+		FloatBubble.Visible = false
+		MainFrame.Visible = true
+		ScaleSpring.Value = 0.2
+		ScaleSpring:SetTarget(1.0)
+	end
+end
+
+ClosePill.MouseButton1Click:Connect(function()
+	SetMinimizedState(true)
+end)
+
+-- Físicas de Arrastre e Inercia para FloatBubble
+local isBubbleDragging = false
+local bubbleVelocity = Vector2.zero
+local lastBubblePos = Vector2.zero
+local lastBubbleTime = 0
+
+FloatBubble.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		isBubbleDragging = true
+		bubbleVelocity = Vector2.zero
+		lastBubblePos = Vector2.new(input.Position.X, input.Position.Y)
+		lastBubbleTime = os.clock()
+
+		local moveConn
+		moveConn = UserInputService.InputChanged:Connect(function(moveInput)
+			if isBubbleDragging and (moveInput.UserInputType == Enum.UserInputType.MouseMovement or moveInput.UserInputType == Enum.UserInputType.Touch) then
+				local currentPos = Vector2.new(moveInput.Position.X, moveInput.Position.Y)
+				local now = os.clock()
+				local dt = math.max(now - lastBubbleTime, 0.001)
+
+				bubbleVelocity = (currentPos - lastBubblePos) / dt
+				lastBubblePos = currentPos
+				lastBubbleTime = now
+
+				local clX = math.clamp(currentPos.X, 26, Camera.ViewportSize.X - 26)
+				local clY = math.clamp(currentPos.Y, 26, Camera.ViewportSize.Y - 26)
+				FloatBubble.Position = UDim2.fromOffset(clX, clY)
+			end
+		end)
+
+		local endConn
+		endConn = UserInputService.InputEnded:Connect(function(endInput)
+			if endInput.UserInputType == Enum.UserInputType.MouseButton1 or endInput.UserInputType == Enum.UserInputType.Touch then
+				isBubbleDragging = false
+				moveConn:Disconnect()
+				endConn:Disconnect()
+
+				-- Clic para reabrir
+				if bubbleVelocity.Magnitude < 50 then
+					SetMinimizedState(false)
+					return
+				end
+
+				-- Simulación de inercia tras el lanzamiento
+				task.spawn(function()
+					local friction = 0.93
+					while bubbleVelocity.Magnitude > 15 and not isBubbleDragging do
+						local dt = RunService.RenderStepped:Wait()
+						local current = Vector2.new(FloatBubble.Position.X.Offset, FloatBubble.Position.Y.Offset)
+						local nextPos = current + (bubbleVelocity * dt)
+
+						local clX = math.clamp(nextPos.X, 26, Camera.ViewportSize.X - 26)
+						local clY = math.clamp(nextPos.Y, 26, Camera.ViewportSize.Y - 26)
+						FloatBubble.Position = UDim2.fromOffset(clX, clY)
+
+						bubbleVelocity = bubbleVelocity * friction
+					end
+				end)
+			end
+		end)
+	end
+end)
+
+-- ----------------------------------------------------------------------------
+-- 8. COMPONENTES MODULARES (BUTTONS, TOGGLES, SLIDERS, DROPDOWNS)
+-- ----------------------------------------------------------------------------
+local Elements = {}
+
+function Elements.CreateButton(parent, text, callback)
+	local Btn = Instance.new("TextButton")
+	Btn.Size = UDim2.new(1, 0, 0, 28)
+	Btn.BackgroundColor3 = THEME.Card
+	Btn.Text = text
+	Btn.TextColor3 = THEME.Text
+	Btn.Font = Enum.Font.GothamMedium
+	Btn.TextSize = 11
+	Btn.AutoButtonColor = false
+	Btn.Parent = parent
+
+	local Corner = Instance.new("UICorner")
+	Corner.CornerRadius = UDim.new(0, 6)
+	Corner.Parent = Btn
+
+	local Stroke = Instance.new("UIStroke")
+	Stroke.Thickness = 1
+	Stroke.Color = THEME.Border
+	Stroke.Parent = Btn
+
+	Btn.MouseButton1Down:Connect(function()
+		TweenService:Create(Btn, TweenInfo.new(0.1), { BackgroundColor3 = THEME.CardActive, TextColor3 = THEME.Accent }):Play()
+	end)
+	Btn.MouseButton1Up:Connect(function()
+		TweenService:Create(Btn, TweenInfo.new(0.2), { BackgroundColor3 = THEME.Card, TextColor3 = THEME.Text }):Play()
+		if callback then callback() end
+	end)
+	Btn.MouseLeave:Connect(function()
+		TweenService:Create(Btn, TweenInfo.new(0.2), { BackgroundColor3 = THEME.Card, TextColor3 = THEME.Text }):Play()
+	end)
+	return Btn
+end
+
+function Elements.CreateToggle(parent, text, default, callback)
+	local state = default or false
+
+	local Container = Instance.new("TextButton")
+	Container.Size = UDim2.new(1, 0, 0, 28)
+	Container.BackgroundColor3 = THEME.Card
+	Container.Text = ""
+	Container.AutoButtonColor = false
+	Container.Parent = parent
+
+	local Corner = Instance.new("UICorner")
+	Corner.CornerRadius = UDim.new(0, 6)
+	Corner.Parent = Container
+
+	local Label = Instance.new("TextLabel")
+	Label.Size = UDim2.new(1, -40, 1, 0)
+	Label.Position = UDim2.new(0, 8, 0, 0)
+	Label.BackgroundTransparency = 1
+	Label.Text = text
+	Label.TextColor3 = THEME.Text
+	Label.Font = Enum.Font.GothamMedium
+	Label.TextSize = 11
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.Parent = Container
+
+	local Switch = Instance.new("Frame")
+	Switch.Size = UDim2.new(0, 26, 0, 14)
+	Switch.Position = UDim2.new(1, -32, 0.5, -7)
+	Switch.BackgroundColor3 = state and THEME.Accent or THEME.Sidebar
+	Switch.Parent = Container
+
+	local SwitchCorner = Instance.new("UICorner")
+	SwitchCorner.CornerRadius = UDim.new(1, 0)
+	SwitchCorner.Parent = Switch
+
+	local Knob = Instance.new("Frame")
+	Knob.Size = UDim2.new(0, 10, 0, 10)
+	Knob.Position = state and UDim2.new(1, -12, 0.5, -5) or UDim2.new(0, 2, 0.5, -5)
+	Knob.BackgroundColor3 = state and THEME.Background or THEME.TextDark
+	Knob.Parent = Switch
+
+	local KnobCorner = Instance.new("UICorner")
+	KnobCorner.CornerRadius = UDim.new(1, 0)
+	KnobCorner.Parent = Knob
+
+	Container.MouseButton1Click:Connect(function()
+		state = not state
+		TweenService:Create(Switch, TweenInfo.new(0.2), {
+			BackgroundColor3 = state and THEME.Accent or THEME.Sidebar
+		}):Play()
+		TweenService:Create(Knob, TweenInfo.new(0.2), {
+			Position = state and UDim2.new(1, -12, 0.5, -5) or UDim2.new(0, 2, 0.5, -5),
+			BackgroundColor3 = state and THEME.Background or THEME.TextDark
+		}):Play()
+		if callback then callback(state) end
+	end)
+end
+
+function Elements.CreateSlider(parent, text, min, max, default, callback)
+	local value = default or min
+
+	local SliderFrame = Instance.new("Frame")
+	SliderFrame.Size = UDim2.new(1, 0, 0, 36)
+	SliderFrame.BackgroundColor3 = THEME.Card
+	SliderFrame.Parent = parent
+
+	local Corner = Instance.new("UICorner")
+	Corner.CornerRadius = UDim.new(0, 6)
+	Corner.Parent = SliderFrame
+
+	local Label = Instance.new("TextLabel")
+	Label.Size = UDim2.new(1, -50, 0, 16)
+	Label.Position = UDim2.new(0, 8, 0, 4)
+	Label.BackgroundTransparency = 1
+	Label.Text = text
+	Label.TextColor3 = THEME.Text
+	Label.Font = Enum.Font.GothamMedium
+	Label.TextSize = 11
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.Parent = SliderFrame
+
+	local ValLabel = Instance.new("TextLabel")
+	ValLabel.Size = UDim2.new(0, 40, 0, 16)
+	ValLabel.Position = UDim2.new(1, -46, 0, 4)
+	ValLabel.BackgroundTransparency = 1
+	ValLabel.Text = tostring(value)
+	ValLabel.TextColor3 = THEME.Accent
+	ValLabel.Font = Enum.Font.GothamBold
+	ValLabel.TextSize = 11
+	ValLabel.TextXAlignment = Enum.TextXAlignment.Right
+	ValLabel.Parent = SliderFrame
+
+	local Track = Instance.new("Frame")
+	Track.Size = UDim2.new(1, -16, 0, 4)
+	Track.Position = UDim2.new(0, 8, 0, 24)
+	Track.BackgroundColor3 = THEME.Sidebar
+	Track.Parent = SliderFrame
+
+	local TrackCorner = Instance.new("UICorner")
+	TrackCorner.CornerRadius = UDim.new(1, 0)
+	TrackCorner.Parent = Track
+
+	local Fill = Instance.new("Frame")
+	local progress = math.clamp((value - min) / (max - min), 0, 1)
+	Fill.Size = UDim2.new(progress, 0, 1, 0)
+	Fill.BackgroundColor3 = THEME.Accent
+	Fill.BorderSizePixel = 0
+	Fill.Parent = Track
+
+	local FillCorner = Instance.new("UICorner")
+	FillCorner.CornerRadius = UDim.new(1, 0)
+	FillCorner.Parent = Fill
+
+	local dragging = false
+	local function UpdateSlider(inputX)
+		local relative = math.clamp((inputX - Track.AbsolutePosition.X) / Track.AbsoluteSize.X, 0, 1)
+		value = math.floor(min + ((max - min) * relative))
+		ValLabel.Text = tostring(value)
+		Fill.Size = UDim2.new(relative, 0, 1, 0)
+		if callback then callback(value) end
+	end
+
+	SliderFrame.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			UpdateSlider(input.Position.X)
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			UpdateSlider(input.Position.X)
+		end
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+end
+
+-- ----------------------------------------------------------------------------
+-- 9. CARGADOR DE PESTAÑAS (TABS MANAGER)
+-- ----------------------------------------------------------------------------
+local Tabs = {}
+local TabFrames = {}
+local selectedTabBtn = nil
+
+local function SwitchTab(name)
+	for tabName, frame in pairs(TabFrames) do
+		frame.Visible = (tabName == name)
+	end
+end
+
+local function AddTab(name, order)
+	local Page = Instance.new("Frame")
+	Page.Name = name .. "_Page"
+	Page.Size = UDim2.new(1, 0, 1, 0)
+	Page.BackgroundTransparency = 1
+	Page.Visible = false
+	Page.Parent = Content
+
+	local PageLayout = Instance.new("UIListLayout")
+	PageLayout.Padding = UDim.new(0, 6)
+	PageLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	PageLayout.Parent = Page
+
+	TabFrames[name] = Page
+
+	local TabBtn = Instance.new("TextButton")
+	TabBtn.Name = name .. "_Tab"
+	TabBtn.Size = UDim2.new(1, 0, 0, 26)
+	TabBtn.BackgroundColor3 = THEME.Sidebar
+	TabBtn.Text = name
+	TabBtn.TextColor3 = THEME.TextDark
+	TabBtn.Font = Enum.Font.GothamMedium
+	TabBtn.TextSize = 11
+	TabBtn.AutoButtonColor = false
+	TabBtn.LayoutOrder = order
+	TabBtn.Parent = Sidebar
+
+	local TabCorner = Instance.new("UICorner")
+	TabCorner.CornerRadius = UDim.new(0, 6)
+	TabCorner.Parent = TabBtn
+
+	TabBtn.MouseButton1Click:Connect(function()
+		if selectedTabBtn then
+			TweenService:Create(selectedTabBtn, TweenInfo.new(0.2), {
+				BackgroundColor3 = THEME.Sidebar,
+				TextColor3 = THEME.TextDark
+			}):Play()
+		end
+		selectedTabBtn = TabBtn
+		TweenService:Create(TabBtn, TweenInfo.new(0.2), {
+			BackgroundColor3 = THEME.CardActive,
+			TextColor3 = THEME.Accent
+		}):Play()
+		SwitchTab(name)
+	end)
+
+	if order == 1 then
+		selectedTabBtn = TabBtn
+		TabBtn.BackgroundColor3 = THEME.CardActive
+		TabBtn.TextColor3 = THEME.Accent
+		Page.Visible = true
+	end
+
+	return Page
+end
+
+-- ----------------------------------------------------------------------------
+-- 10. INICIALIZACIÓN DE PESTAÑAS Y DEMOS
+-- ----------------------------------------------------------------------------
+local TabMain = AddTab("Principal", 1)
+local TabVisuals = AddTab("Visuales", 2)
+local TabConfig = AddTab("Ajustes", 3)
+
+-- Pestaña Principal
+Elements.CreateButton(TabMain, "Ejecutar Acción Rápida", function()
+	Notify("Acción ejecutada correctamente.")
+end)
+
+Elements.CreateToggle(TabMain, "Activar Modo Rápido", false, function(state)
+	Notify("Modo rápido: " .. (state and "Activado" or "Desactivado"))
+end)
+
+Elements.CreateSlider(TabMain, "Factor de Velocidad", 10, 100, 25, function(val)
+	-- Callback del slider
+end)
+
+-- Pestaña Visuales
+Elements.CreateToggle(TabVisuals, "Indicadores en Pantalla", true, function(state)
+	Notify("Visuales actualizados.")
+end)
+
+-- Pestaña Ajustes
+Elements.CreateButton(TabConfig, "Recargar Interfaz", function()
+	Notify("Interfaz reiniciada.")
+end)
+
+-- Animación de entrada inicial
+ScaleSpring.Value = 0.3
+ScaleSpring:SetTarget(1.0)
+Notify("Obsidian Hub cargado.", 2.5)
