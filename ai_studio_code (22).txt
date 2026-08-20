@@ -1,0 +1,824 @@
+-- ============================================================================
+-- CRIMSON BLADE // V2.0 (DECAL FIX & ANTI-WHITE BOX)
+-- ============================================================================
+
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local ContentProvider = game:GetService("ContentProvider")
+local Players = game:GetService("Players")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- ----------------------------------------------------------------------------
+-- 1. CONVERSOR AUTOMÁTICO UTF-8 A MAYÚSCULAS
+-- ----------------------------------------------------------------------------
+local ACCENT_MAP = {
+	["á"] = "Á", ["é"] = "É", ["í"] = "Í", ["ó"] = "Ó", ["ú"] = "Ú",
+	["ñ"] = "Ñ", ["ü"] = "Ü",
+	["à"] = "À", ["è"] = "È", ["ì"] = "Ì", ["ò"] = "Ò", ["ù"] = "Ù"
+}
+
+local function ToUpper(str: string): string
+	local result = string.upper(str)
+	for lowerAccent, upperAccent in pairs(ACCENT_MAP) do
+		result = string.gsub(result, lowerAccent, upperAccent)
+	end
+	return result
+end
+
+-- ----------------------------------------------------------------------------
+-- 2. INYECCIÓN SEGURA
+-- ----------------------------------------------------------------------------
+local function GetSafeContainer(): Instance
+	if typeof(gethui) == "function" then
+		local s, res = pcall(gethui)
+		if s and res then return res end
+	end
+	local s, coreGui = pcall(function() return game:GetService("CoreGui") end)
+	if s and coreGui then return coreGui end
+	return LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local PARENT = GetSafeContainer()
+local OLD_UI = PARENT:FindFirstChild("CrimsonBladeStealth")
+if OLD_UI then OLD_UI:Destroy() end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "CrimsonBladeStealth"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = PARENT
+
+-- ----------------------------------------------------------------------------
+-- 3. ASSET DEL LOGO Y TEMAS
+-- ----------------------------------------------------------------------------
+local LOGO_ID = "rbxassetid://132983086319737"
+
+-- Precargar imagen en segundo plano para evitar retrasos de carga
+task.spawn(function()
+	pcall(function()
+		local img = Instance.new("ImageLabel")
+		img.Image = LOGO_ID
+		ContentProvider:PreloadAsync({img})
+	end)
+end)
+
+local THEME = {
+	PureBlack   = Color3.fromRGB(8, 9, 11),
+	HubBg       = Color3.fromRGB(13, 14, 17),
+	SidebarBg   = Color3.fromRGB(9, 10, 13),
+	CardBg      = Color3.fromRGB(18, 19, 24),
+	CardHover   = Color3.fromRGB(24, 26, 33),
+	CardBorder  = Color3.fromRGB(30, 32, 40),
+	Crimson     = Color3.fromRGB(255, 45, 75),      -- Carmesí Neón
+	CrimsonDim  = Color3.fromRGB(160, 20, 45),
+	SilverText  = Color3.fromRGB(240, 242, 248),
+	DimText     = Color3.fromRGB(115, 120, 135)
+}
+
+local HUB_SIZE = UDim2.fromOffset(420, 250)
+local IS_OPEN = true
+
+-- ----------------------------------------------------------------------------
+-- 4. CONTENEDOR PRINCIPAL DEL HUB
+-- ----------------------------------------------------------------------------
+local MainHub = Instance.new("Frame")
+MainHub.Name = "MainHub"
+MainHub.Size = HUB_SIZE
+MainHub.AnchorPoint = Vector2.new(0.5, 0.5)
+MainHub.Position = UDim2.new(0.5, 0, 0.5, 0)
+MainHub.BackgroundColor3 = THEME.HubBg
+MainHub.BorderSizePixel = 0
+MainHub.ClipsDescendants = false
+MainHub.Parent = ScreenGui
+
+local HubScale = Instance.new("UIScale")
+HubScale.Scale = 1
+HubScale.Parent = MainHub
+
+local HubCorner = Instance.new("UICorner")
+HubCorner.CornerRadius = UDim.new(0, 14)
+HubCorner.Parent = MainHub
+
+-- Borde exterior con rotación en escala de grises / plata
+local HubStroke = Instance.new("UIStroke")
+HubStroke.Thickness = 1.5
+HubStroke.Color = Color3.fromRGB(255, 255, 255)
+HubStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+HubStroke.Parent = MainHub
+
+local HubGradient = Instance.new("UIGradient")
+HubGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0.00, Color3.fromRGB(245, 245, 255)),
+	ColorSequenceKeypoint.new(0.30, Color3.fromRGB(45, 48, 58)),
+	ColorSequenceKeypoint.new(0.50, Color3.fromRGB(130, 135, 150)),
+	ColorSequenceKeypoint.new(0.75, Color3.fromRGB(25, 28, 35)),
+	ColorSequenceKeypoint.new(1.00, Color3.fromRGB(245, 245, 255))
+})
+HubGradient.Rotation = 0
+HubGradient.Parent = HubStroke
+
+-- ----------------------------------------------------------------------------
+-- 5. CABECERA TÁCTICA & CLOSEAREA
+-- ----------------------------------------------------------------------------
+local Header = Instance.new("Frame")
+Header.Name = "Header"
+Header.Size = UDim2.new(1, 0, 0, 36)
+Header.BackgroundTransparency = 1
+Header.Active = true
+Header.Parent = MainHub
+
+-- Píldora de minimizado central
+local CloseHandle = Instance.new("TextButton")
+CloseHandle.Name = "CloseHandle"
+CloseHandle.Size = UDim2.new(0, 80, 0, 18)
+CloseHandle.AnchorPoint = Vector2.new(0.5, 0)
+CloseHandle.Position = UDim2.new(0.5, 0, 0, 4)
+CloseHandle.BackgroundTransparency = 1
+CloseHandle.Text = ""
+CloseHandle.Parent = Header
+
+local Pill = Instance.new("Frame")
+Pill.Size = UDim2.new(0, 44, 0, 4)
+Pill.AnchorPoint = Vector2.new(0.5, 0.5)
+Pill.Position = UDim2.new(0.5, 0, 0.5, 0)
+Pill.BackgroundColor3 = Color3.fromRGB(75, 80, 95)
+Pill.BorderSizePixel = 0
+Pill.Parent = CloseHandle
+
+local PillCorner = Instance.new("UICorner")
+PillCorner.CornerRadius = UDim.new(1, 0)
+PillCorner.Parent = Pill
+
+-- Mini Logo Oficial en la Cabecera
+local HeaderLogo = Instance.new("ImageLabel")
+HeaderLogo.Name = "HeaderLogo"
+HeaderLogo.Size = UDim2.fromOffset(22, 22)
+HeaderLogo.Position = UDim2.new(0, 12, 0, 7)
+HeaderLogo.BackgroundTransparency = 1
+HeaderLogo.Image = LOGO_ID
+HeaderLogo.ScaleType = Enum.ScaleType.Fit
+HeaderLogo.Parent = Header
+
+-- Identificador de Marca en Mayúsculas (V2.0)
+local LogoTag = Instance.new("TextLabel")
+LogoTag.Size = UDim2.new(0, 160, 0, 18)
+LogoTag.Position = UDim2.new(0, 40, 0, 9)
+LogoTag.BackgroundTransparency = 1
+LogoTag.Text = "CRIMSON<font color='#FF2D4B'>BLADE</font> <font color='#656A7A' size='9'>2.0</font>"
+LogoTag.RichText = true
+LogoTag.TextColor3 = THEME.SilverText
+LogoTag.Font = Enum.Font.GothamBold
+LogoTag.TextSize = 12
+LogoTag.TextXAlignment = Enum.TextXAlignment.Left
+LogoTag.Parent = Header
+
+-- Insignia Stealth V2.0
+local Badge = Instance.new("Frame")
+Badge.Size = UDim2.new(0, 72, 0, 18)
+Badge.AnchorPoint = Vector2.new(1, 0.5)
+Badge.Position = UDim2.new(1, -12, 0.5, 0)
+Badge.BackgroundColor3 = THEME.CardBg
+Badge.BorderSizePixel = 0
+Badge.Parent = Header
+
+local BadgeCorner = Instance.new("UICorner")
+BadgeCorner.CornerRadius = UDim.new(0, 6)
+BadgeCorner.Parent = Badge
+
+local BadgeStroke = Instance.new("UIStroke")
+BadgeStroke.Thickness = 1
+BadgeStroke.Color = THEME.CardBorder
+BadgeStroke.Parent = Badge
+
+local StatusDot = Instance.new("Frame")
+StatusDot.Size = UDim2.fromOffset(6, 6)
+StatusDot.Position = UDim2.new(0, 8, 0.5, -3)
+StatusDot.BackgroundColor3 = THEME.Crimson
+StatusDot.BorderSizePixel = 0
+StatusDot.Parent = Badge
+
+local DotCorner = Instance.new("UICorner")
+DotCorner.CornerRadius = UDim.new(1, 0)
+DotCorner.Parent = StatusDot
+
+local BadgeLabel = Instance.new("TextLabel")
+BadgeLabel.Size = UDim2.new(1, -18, 1, 0)
+BadgeLabel.Position = UDim2.new(0, 18, 0, 0)
+BadgeLabel.BackgroundTransparency = 1
+BadgeLabel.Text = "V2.0"
+BadgeLabel.TextColor3 = THEME.DimText
+BadgeLabel.Font = Enum.Font.GothamBold
+BadgeLabel.TextSize = 9
+BadgeLabel.TextXAlignment = Enum.TextXAlignment.Left
+BadgeLabel.Parent = Badge
+
+-- ----------------------------------------------------------------------------
+-- 6. CUERPO (LISTA LATERAL + CONTENIDO)
+-- ----------------------------------------------------------------------------
+local Body = Instance.new("Frame")
+Body.Name = "Body"
+Body.Size = UDim2.new(1, -20, 1, -44)
+Body.Position = UDim2.new(0, 10, 0, 36)
+Body.BackgroundTransparency = 1
+Body.Parent = MainHub
+
+-- Sidebar
+local Sidebar = Instance.new("Frame")
+Sidebar.Name = "Sidebar"
+Sidebar.Size = UDim2.new(0.28, 0, 1, 0)
+Sidebar.BackgroundColor3 = THEME.SidebarBg
+Sidebar.BorderSizePixel = 0
+Sidebar.Parent = Body
+
+local SideCorner = Instance.new("UICorner")
+SideCorner.CornerRadius = UDim.new(0, 10)
+SideCorner.Parent = Sidebar
+
+local SideStroke = Instance.new("UIStroke")
+SideStroke.Thickness = 1
+SideStroke.Color = THEME.CardBorder
+SideStroke.Parent = Sidebar
+
+local SideScroll = Instance.new("ScrollingFrame")
+SideScroll.Size = UDim2.new(1, -6, 1, -8)
+SideScroll.Position = UDim2.new(0, 3, 0, 4)
+SideScroll.BackgroundTransparency = 1
+SideScroll.BorderSizePixel = 0
+SideScroll.ScrollBarThickness = 0
+SideScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+SideScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+SideScroll.Parent = Sidebar
+
+local SideLayout = Instance.new("UIListLayout")
+SideLayout.Padding = UDim.new(0, 4)
+SideLayout.SortOrder = Enum.SortOrder.LayoutOrder
+SideLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+SideLayout.Parent = SideScroll
+
+-- Contenedor de Páginas
+local ContentArea = Instance.new("Frame")
+ContentArea.Name = "ContentArea"
+ContentArea.Size = UDim2.new(0.70, 0, 1, 0)
+ContentArea.Position = UDim2.new(0.30, 0, 0, 0)
+ContentArea.BackgroundTransparency = 1
+ContentArea.Parent = Body
+
+-- ----------------------------------------------------------------------------
+-- 7. BOTÓN FLOTANTE OPTIMIZADO (ANTI-DESBORDE BLANCO)
+-- ----------------------------------------------------------------------------
+local FloatingIcon = Instance.new("TextButton")
+FloatingIcon.Name = "FloatingIcon"
+FloatingIcon.Size = UDim2.fromOffset(52, 52)
+FloatingIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+FloatingIcon.Position = UDim2.new(0.5, 0, 0.08, 0)
+FloatingIcon.BackgroundColor3 = THEME.PureBlack
+FloatingIcon.BorderSizePixel = 0
+FloatingIcon.AutoButtonColor = false
+FloatingIcon.Visible = false
+FloatingIcon.ClipsDescendants = true
+FloatingIcon.Parent = ScreenGui
+
+local FloatScale = Instance.new("UIScale")
+FloatScale.Scale = 0
+FloatScale.Parent = FloatingIcon
+
+local FloatCorner = Instance.new("UICorner")
+FloatCorner.CornerRadius = UDim.new(0, 13)
+FloatCorner.Parent = FloatingIcon
+
+-- Borde exterior gris rotativo
+local FloatStroke = Instance.new("UIStroke")
+FloatStroke.Thickness = 1.8
+FloatStroke.Color = Color3.fromRGB(255, 255, 255)
+FloatStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+FloatStroke.Parent = FloatingIcon
+
+local FloatGradient = Instance.new("UIGradient")
+FloatGradient.Color = HubGradient.Color
+FloatGradient.Rotation = 0
+FloatGradient.Parent = FloatStroke
+
+-- Imagen recortada dentro del marco
+local FloatLogoImage = Instance.new("ImageLabel")
+FloatLogoImage.Name = "FloatLogoImage"
+FloatLogoImage.Size = UDim2.fromOffset(36, 36)
+FloatLogoImage.AnchorPoint = Vector2.new(0.5, 0.5)
+FloatLogoImage.Position = UDim2.new(0.5, 0, 0.5, 0)
+FloatLogoImage.BackgroundTransparency = 1
+FloatLogoImage.Image = LOGO_ID
+FloatLogoImage.ScaleType = Enum.ScaleType.Fit
+FloatLogoImage.Parent = FloatingIcon
+
+local ImageCorner = Instance.new("UICorner")
+ImageCorner.CornerRadius = UDim.new(0, 8)
+ImageCorner.Parent = FloatLogoImage
+
+local MiniDot = Instance.new("Frame")
+MiniDot.Size = UDim2.fromOffset(4, 4)
+MiniDot.Position = UDim2.new(1, -8, 0, 5)
+MiniDot.BackgroundColor3 = THEME.Crimson
+MiniDot.BorderSizePixel = 0
+MiniDot.ZIndex = 3
+MiniDot.Parent = FloatingIcon
+
+local MiniDotCorner = Instance.new("UICorner")
+MiniDotCorner.CornerRadius = UDim.new(1, 0)
+MiniDotCorner.Parent = MiniDot
+
+-- ----------------------------------------------------------------------------
+-- 8. BUCLE DE ROTACIÓN DE BORDES (HUB Y BOTÓN FLOTANTE)
+-- ----------------------------------------------------------------------------
+task.spawn(function()
+	local rot = 0
+	while true do
+		rot = (rot + 1.8) % 360
+		HubGradient.Rotation = rot
+		FloatGradient.Rotation = rot
+		task.wait(0.016)
+	end
+end)
+
+-- ----------------------------------------------------------------------------
+-- 9. SISTEMA DE ARRASTRE FLUIDO (0 LAG)
+-- ----------------------------------------------------------------------------
+local function ApplyStandardDrag(handle: GuiObject, frame: GuiObject)
+	local isDragging = false
+	local dragStart = Vector2.zero
+	local startPos = UDim2.new()
+
+	handle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			isDragging = true
+			dragStart = Vector2.new(input.Position.X, input.Position.Y)
+			startPos = frame.Position
+
+			local endConn
+			endConn = UserInputService.InputEnded:Connect(function(endInput)
+				if endInput.UserInputType == Enum.UserInputType.MouseButton1 or endInput.UserInputType == Enum.UserInputType.Touch then
+					isDragging = false
+					endConn:Disconnect()
+				end
+			end)
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local current = Vector2.new(input.Position.X, input.Position.Y)
+			local delta = current - dragStart
+
+			frame.Position = UDim2.new(
+				startPos.X.Scale,
+				startPos.X.Offset + delta.X,
+				startPos.Y.Scale,
+				startPos.Y.Offset + delta.Y
+			)
+		end
+	end)
+end
+
+ApplyStandardDrag(Header, MainHub)
+
+-- Arrastre + Detección de Tap para el Botón Flotante
+local isFloatDragging = false
+local floatStartMouse = Vector2.zero
+local floatStartPos = UDim2.new()
+
+FloatingIcon.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		isFloatDragging = true
+		floatStartMouse = Vector2.new(input.Position.X, input.Position.Y)
+		floatStartPos = FloatingIcon.Position
+
+		local releaseConn
+		releaseConn = UserInputService.InputEnded:Connect(function(endInput)
+			if endInput.UserInputType == Enum.UserInputType.MouseButton1 or endInput.UserInputType == Enum.UserInputType.Touch then
+				isFloatDragging = false
+				releaseConn:Disconnect()
+
+				local endMouse = Vector2.new(endInput.Position.X, endInput.Position.Y)
+				if (endMouse - floatStartMouse).Magnitude < 10 then
+					ToggleHub(true)
+				else
+					local vSize = Camera.ViewportSize
+					local curX = FloatingIcon.Position.X.Offset + (FloatingIcon.Position.X.Scale * vSize.X)
+					local curY = FloatingIcon.Position.Y.Offset + (FloatingIcon.Position.Y.Scale * vSize.Y)
+
+					local snapX = (curX < vSize.X * 0.5) and 35 or (vSize.X - 35)
+					local snapY = math.clamp(curY, 40, vSize.Y - 40)
+
+					TweenService:Create(FloatingIcon, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+						Position = UDim2.fromOffset(snapX, snapY)
+					}):Play()
+				end
+			end
+		end)
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if isFloatDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local current = Vector2.new(input.Position.X, input.Position.Y)
+		local delta = current - floatStartMouse
+		FloatingIcon.Position = UDim2.new(
+			floatStartPos.X.Scale,
+			floatStartPos.X.Offset + delta.X,
+			floatStartPos.Y.Scale,
+			floatStartPos.Y.Offset + delta.Y
+		)
+	end
+end)
+
+-- ----------------------------------------------------------------------------
+-- 10. ANIMACIONES DE APERTURA / MINIMIZADO
+-- ----------------------------------------------------------------------------
+function ToggleHub(open: boolean)
+	IS_OPEN = open
+	if open then
+		local hideFloat = TweenService:Create(FloatScale, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0 })
+		hideFloat:Play()
+		hideFloat.Completed:Connect(function()
+			FloatingIcon.Visible = false
+		end)
+
+		MainHub.Visible = true
+		HubScale.Scale = 0.6
+		TweenService:Create(HubScale, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+			Scale = 1
+		}):Play()
+	else
+		local shrink = TweenService:Create(HubScale, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.In), { Scale = 0 })
+		shrink:Play()
+		shrink.Completed:Connect(function()
+			MainHub.Visible = false
+
+			FloatingIcon.Visible = true
+			FloatScale.Scale = 0
+			TweenService:Create(FloatScale, TweenInfo.new(0.4, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out), {
+				Scale = 1
+			}):Play()
+		end)
+	end
+end
+
+CloseHandle.MouseButton1Click:Connect(function() ToggleHub(false) end)
+
+-- ----------------------------------------------------------------------------
+-- 11. GESTOR DE PESTAÑAS (EN MAYÚSCULAS UTF-8)
+-- ----------------------------------------------------------------------------
+local Pages = {}
+local TabButtons = {}
+local currentTab = nil
+
+local function AddTab(name: string, isDefault: boolean)
+	local upperName = ToUpper(name)
+
+	local Page = Instance.new("ScrollingFrame")
+	Page.Name = upperName .. "_Page"
+	Page.Size = UDim2.new(1, 0, 1, 0)
+	Page.BackgroundTransparency = 1
+	Page.BorderSizePixel = 0
+	Page.ScrollBarThickness = 2
+	Page.ScrollBarImageColor3 = THEME.Crimson
+	Page.CanvasSize = UDim2.new(0, 0, 0, 0)
+	Page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	Page.Visible = false
+	Page.Parent = ContentArea
+
+	local PageLayout = Instance.new("UIListLayout")
+	PageLayout.Padding = UDim.new(0, 6)
+	PageLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	PageLayout.Parent = Page
+
+	Pages[upperName] = Page
+
+	local TabBtn = Instance.new("TextButton")
+	TabBtn.Name = upperName .. "_TabBtn"
+	TabBtn.Size = UDim2.new(1, -6, 0, 32)
+	TabBtn.BackgroundColor3 = THEME.SidebarBg
+	TabBtn.Text = ""
+	TabBtn.AutoButtonColor = false
+	TabBtn.Parent = SideScroll
+
+	local TabCorner = Instance.new("UICorner")
+	TabCorner.CornerRadius = UDim.new(0, 8)
+	TabCorner.Parent = TabBtn
+
+	local TabIndicator = Instance.new("Frame")
+	TabIndicator.Size = UDim2.new(0, 3, 0.5, 0)
+	TabIndicator.Position = UDim2.new(0, 4, 0.25, 0)
+	TabIndicator.BackgroundColor3 = THEME.Crimson
+	TabIndicator.BackgroundTransparency = 1
+	TabIndicator.BorderSizePixel = 0
+	TabIndicator.Parent = TabBtn
+
+	local IndCorner = Instance.new("UICorner")
+	IndCorner.CornerRadius = UDim.new(1, 0)
+	IndCorner.Parent = TabIndicator
+
+	local TabLabel = Instance.new("TextLabel")
+	TabLabel.Size = UDim2.new(1, -16, 1, 0)
+	TabLabel.Position = UDim2.new(0, 12, 0, 0)
+	TabLabel.BackgroundTransparency = 1
+	TabLabel.Text = upperName
+	TabLabel.TextColor3 = THEME.DimText
+	TabLabel.Font = Enum.Font.GothamBold
+	TabLabel.TextSize = 11
+	TabLabel.TextXAlignment = Enum.TextXAlignment.Left
+	TabLabel.Parent = TabBtn
+
+	TabButtons[upperName] = {Btn = TabBtn, Label = TabLabel, Indicator = TabIndicator}
+
+	local function SelectTab()
+		if currentTab == upperName then return end
+		currentTab = upperName
+
+		for tabN, data in pairs(TabButtons) do
+			local active = (tabN == upperName)
+			Pages[tabN].Visible = active
+
+			TweenService:Create(data.Btn, TweenInfo.new(0.25), {
+				BackgroundColor3 = active and THEME.CardBg or THEME.SidebarBg
+			}):Play()
+			TweenService:Create(data.Label, TweenInfo.new(0.25), {
+				TextColor3 = active and THEME.SilverText or THEME.DimText
+			}):Play()
+			TweenService:Create(data.Indicator, TweenInfo.new(0.25), {
+				BackgroundTransparency = active and 0 or 1
+			}):Play()
+		end
+	end
+
+	TabBtn.MouseButton1Click:Connect(SelectTab)
+
+	if isDefault then
+		SelectTab()
+	end
+
+	return Page
+end
+
+-- ----------------------------------------------------------------------------
+-- 12. COMPONENTES VISUALES (MAYÚSCULAS UTF-8)
+-- ----------------------------------------------------------------------------
+local Elements = {}
+
+function Elements.AddSection(page: Instance, title: string)
+	local Label = Instance.new("TextLabel")
+	Label.Size = UDim2.new(1, 0, 0, 16)
+	Label.BackgroundTransparency = 1
+	Label.Text = ToUpper(title)
+	Label.TextColor3 = THEME.DimText
+	Label.Font = Enum.Font.GothamBold
+	Label.TextSize = 10
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.Parent = page
+end
+
+function Elements.AddButton(page: Instance, text: string, callback: () -> ())
+	local Card = Instance.new("TextButton")
+	Card.Size = UDim2.new(1, 0, 0, 32)
+	Card.BackgroundColor3 = THEME.CardBg
+	Card.Text = ""
+	Card.AutoButtonColor = false
+	Card.Parent = page
+
+	local Corner = Instance.new("UICorner")
+	Corner.CornerRadius = UDim.new(0, 8)
+	Corner.Parent = Card
+
+	local Stroke = Instance.new("UIStroke")
+	Stroke.Thickness = 1
+	Stroke.Color = THEME.CardBorder
+	Stroke.Parent = Card
+
+	local Label = Instance.new("TextLabel")
+	Label.Size = UDim2.new(1, -40, 1, 0)
+	Label.Position = UDim2.new(0, 12, 0, 0)
+	Label.BackgroundTransparency = 1
+	Label.Text = ToUpper(text)
+	Label.TextColor3 = THEME.SilverText
+	Label.Font = Enum.Font.GothamBold
+	Label.TextSize = 11
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.Parent = Card
+
+	local ActionIcon = Instance.new("TextLabel")
+	ActionIcon.Size = UDim2.fromOffset(20, 20)
+	ActionIcon.Position = UDim2.new(1, -26, 0.5, -10)
+	ActionIcon.BackgroundTransparency = 1
+	ActionIcon.Text = "→"
+	ActionIcon.TextColor3 = THEME.DimText
+	ActionIcon.Font = Enum.Font.GothamBold
+	ActionIcon.TextSize = 12
+	ActionIcon.Parent = Card
+
+	Card.MouseButton1Down:Connect(function()
+		TweenService:Create(Card, TweenInfo.new(0.1), { BackgroundColor3 = THEME.CardHover }):Play()
+		TweenService:Create(ActionIcon, TweenInfo.new(0.1), { TextColor3 = THEME.Crimson }):Play()
+	end)
+
+	local function Release()
+		TweenService:Create(Card, TweenInfo.new(0.2), { BackgroundColor3 = THEME.CardBg }):Play()
+		TweenService:Create(ActionIcon, TweenInfo.new(0.2), { TextColor3 = THEME.DimText }):Play()
+	end
+
+	Card.MouseButton1Up:Connect(function()
+		Release()
+		if callback then callback() end
+	end)
+	Card.MouseLeave:Connect(Release)
+end
+
+function Elements.AddToggle(page: Instance, text: string, default: boolean, callback: (boolean) -> ())
+	local state = default or false
+
+	local Card = Instance.new("TextButton")
+	Card.Size = UDim2.new(1, 0, 0, 32)
+	Card.BackgroundColor3 = THEME.CardBg
+	Card.Text = ""
+	Card.AutoButtonColor = false
+	Card.Parent = page
+
+	local Corner = Instance.new("UICorner")
+	Corner.CornerRadius = UDim.new(0, 8)
+	Corner.Parent = Card
+
+	local Stroke = Instance.new("UIStroke")
+	Stroke.Thickness = 1
+	Stroke.Color = THEME.CardBorder
+	Stroke.Parent = Card
+
+	local Label = Instance.new("TextLabel")
+	Label.Size = UDim2.new(1, -55, 1, 0)
+	Label.Position = UDim2.new(0, 12, 0, 0)
+	Label.BackgroundTransparency = 1
+	Label.Text = ToUpper(text)
+	Label.TextColor3 = THEME.SilverText
+	Label.Font = Enum.Font.GothamBold
+	Label.TextSize = 11
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.Parent = Card
+
+	local Switch = Instance.new("Frame")
+	Switch.Size = UDim2.new(0, 32, 0, 16)
+	Switch.Position = UDim2.new(1, -40, 0.5, -8)
+	Switch.BackgroundColor3 = state and THEME.Crimson or Color3.fromRGB(28, 30, 38)
+	Switch.BorderSizePixel = 0
+	Switch.Parent = Card
+
+	local SwitchCorner = Instance.new("UICorner")
+	SwitchCorner.CornerRadius = UDim.new(1, 0)
+	SwitchCorner.Parent = Switch
+
+	local Knob = Instance.new("Frame")
+	Knob.Size = UDim2.new(0, 12, 0, 12)
+	Knob.Position = state and UDim2.new(1, -14, 0.5, -6) or UDim2.new(0, 2, 0.5, -6)
+	Knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	Knob.BorderSizePixel = 0
+	Knob.Parent = Switch
+
+	local KnobCorner = Instance.new("UICorner")
+	KnobCorner.CornerRadius = UDim.new(1, 0)
+	KnobCorner.Parent = Knob
+
+	Card.MouseButton1Click:Connect(function()
+		state = not state
+		TweenService:Create(Switch, TweenInfo.new(0.2), {
+			BackgroundColor3 = state and THEME.Crimson or Color3.fromRGB(28, 30, 38)
+		}):Play()
+		TweenService:Create(Knob, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+			Position = state and UDim2.new(1, -14, 0.5, -6) or UDim2.new(0, 2, 0.5, -6)
+		}):Play()
+		if callback then callback(state) end
+	end)
+end
+
+function Elements.AddSlider(page: Instance, text: string, min: number, max: number, default: number, callback: (number) -> ())
+	local currentVal = default or min
+
+	local Card = Instance.new("Frame")
+	Card.Size = UDim2.new(1, 0, 0, 40)
+	Card.BackgroundColor3 = THEME.CardBg
+	Card.BorderSizePixel = 0
+	Card.Parent = page
+
+	local Corner = Instance.new("UICorner")
+	Corner.CornerRadius = UDim.new(0, 8)
+	Corner.Parent = Card
+
+	local Stroke = Instance.new("UIStroke")
+	Stroke.Thickness = 1
+	Stroke.Color = THEME.CardBorder
+	Stroke.Parent = Card
+
+	local Label = Instance.new("TextLabel")
+	Label.Size = UDim2.new(1, -55, 0, 16)
+	Label.Position = UDim2.new(0, 12, 0, 5)
+	Label.BackgroundTransparency = 1
+	Label.Text = ToUpper(text)
+	Label.TextColor3 = THEME.SilverText
+	Label.Font = Enum.Font.GothamBold
+	Label.TextSize = 11
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.Parent = Card
+
+	local ValLabel = Instance.new("TextLabel")
+	ValLabel.Size = UDim2.new(0, 40, 0, 16)
+	ValLabel.Position = UDim2.new(1, -48, 0, 5)
+	ValLabel.BackgroundTransparency = 1
+	ValLabel.Text = tostring(currentVal)
+	ValLabel.TextColor3 = THEME.Crimson
+	ValLabel.Font = Enum.Font.GothamBold
+	ValLabel.TextSize = 11
+	ValLabel.TextXAlignment = Enum.TextXAlignment.Right
+	ValLabel.Parent = Card
+
+	local Track = Instance.new("Frame")
+	Track.Size = UDim2.new(1, -24, 0, 4)
+	Track.Position = UDim2.new(0, 12, 0, 26)
+	Track.BackgroundColor3 = Color3.fromRGB(30, 32, 40)
+	Track.BorderSizePixel = 0
+	Track.Parent = Card
+
+	local TrackCorner = Instance.new("UICorner")
+	TrackCorner.CornerRadius = UDim.new(1, 0)
+	TrackCorner.Parent = Track
+
+	local Fill = Instance.new("Frame")
+	local pct = math.clamp((currentVal - min) / (max - min), 0, 1)
+	Fill.Size = UDim2.new(pct, 0, 1, 0)
+	Fill.BackgroundColor3 = THEME.Crimson
+	Fill.BorderSizePixel = 0
+	Fill.Parent = Track
+
+	local FillCorner = Instance.new("UICorner")
+	FillCorner.CornerRadius = UDim.new(1, 0)
+	FillCorner.Parent = Fill
+
+	local dragging = false
+	local function UpdateSlider(xPos)
+		local rel = math.clamp((xPos - Track.AbsolutePosition.X) / Track.AbsoluteSize.X, 0, 1)
+		currentVal = math.floor(min + ((max - min) * rel))
+		ValLabel.Text = tostring(currentVal)
+		Fill.Size = UDim2.new(rel, 0, 1, 0)
+		if callback then callback(currentVal) end
+	end
+
+	Card.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			UpdateSlider(input.Position.X)
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			UpdateSlider(input.Position.X)
+		end
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+end
+
+-- ----------------------------------------------------------------------------
+-- 13. PESTAÑAS Y DEMO (CRIMSON BLADE 2.0)
+-- ----------------------------------------------------------------------------
+local TabMain    = AddTab("Universal", true)
+local TabCombat  = AddTab("Combate", false)
+local TabVisuals = AddTab("Visuales", false)
+local TabConfig  = AddTab("Ajustes", false)
+
+-- Pestaña Universal
+Elements.AddSection(TabMain, "Configuración Principal")
+Elements.AddButton(TabMain, "Copiar Enlace Discord", function()
+	print("[CRIMSON BLADE] ENLACE COPIADO")
+end)
+Elements.AddToggle(TabMain, "Modo Rápido", false, function(state)
+	print("MODO RÁPIDO:", state)
+end)
+Elements.AddSlider(TabMain, "Velocidad Global", 16, 200, 45, function(val)
+	print("VELOCIDAD:", val)
+end)
+
+-- Pestaña Combate
+Elements.AddSection(TabCombat, "Asistencia Táctica")
+Elements.AddToggle(TabCombat, "Auto Apuntado", false, function(state)
+	print("TARGET:", state)
+end)
+
+-- Pestaña Ajustes
+Elements.AddSection(TabConfig, "Sistema de Menú")
+Elements.AddButton(TabConfig, "Minimizar a CB", function()
+	ToggleHub(false)
+end)
+
+-- Animación de entrada inicial
+HubScale.Scale = 0.5
+TweenService:Create(HubScale, TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
