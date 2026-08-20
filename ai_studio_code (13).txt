@@ -1,0 +1,666 @@
+-- ============================================================================
+-- CRIMSON BLADE UI // EXACT YARHM ARCHITECTURE (DARK CRIMSON EDITION)
+-- ============================================================================
+
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- ----------------------------------------------------------------------------
+-- 1. CONTENEDOR SEGURO
+-- ----------------------------------------------------------------------------
+local function GetSafeParent(): Instance
+	if typeof(gethui) == "function" then
+		local s, res = pcall(gethui)
+		if s and res then return res end
+	end
+	local s, coreGui = pcall(function() return game:GetService("CoreGui") end)
+	if s and coreGui then return coreGui end
+	return LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local PARENT = GetSafeParent()
+local OLD_UI = PARENT:FindFirstChild("CrimsonBladeHub")
+if OLD_UI then OLD_UI:Destroy() end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "CrimsonBladeHub"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = PARENT
+
+-- ----------------------------------------------------------------------------
+-- 2. PALETA DE COLORES (BLACK & CRIMSON GLOW)
+-- ----------------------------------------------------------------------------
+local THEME = {
+	PureBlack   = Color3.fromRGB(12, 12, 14),
+	MenuBg      = Color3.fromRGB(16, 17, 20),
+	SidebarBg   = Color3.fromRGB(10, 10, 12),
+	CardBg      = Color3.fromRGB(22, 23, 28),
+	CardActive  = Color3.fromRGB(255, 255, 255),
+	Accent      = Color3.fromRGB(255, 35, 65),     -- Carmesí Neón
+	AccentDark  = Color3.fromRGB(180, 15, 40),
+	TextLight   = Color3.fromRGB(250, 250, 255),
+	TextDim     = Color3.fromRGB(140, 145, 160),
+	TextDark    = Color3.fromRGB(15, 15, 18),
+	BorderSubtle= Color3.fromRGB(35, 38, 48)
+}
+
+local HUB_SIZE = UDim2.fromOffset(430, 255)
+local IS_OPEN = true
+
+-- ----------------------------------------------------------------------------
+-- 3. VENTANA PRINCIPAL (ESTILO YARHM 1:1)
+-- ----------------------------------------------------------------------------
+local Menu = Instance.new("Frame")
+Menu.Name = "Menu"
+Menu.Size = HUB_SIZE
+Menu.AnchorPoint = Vector2.new(0.5, 0.5)
+Menu.Position = UDim2.new(0.5, 0, 0.5, 0)
+Menu.BackgroundColor3 = THEME.MenuBg
+Menu.BorderSizePixel = 0
+Menu.ClipsDescendants = false
+Menu.Parent = ScreenGui
+
+local MenuScale = Instance.new("UIScale")
+MenuScale.Scale = 1
+MenuScale.Parent = Menu
+
+local MenuCorner = Instance.new("UICorner")
+MenuCorner.CornerRadius = UDim.new(0, 16)
+MenuCorner.Parent = Menu
+
+-- Borde exterior con iluminación continua
+local MenuStroke = Instance.new("UIStroke")
+MenuStroke.Thickness = 1.8
+MenuStroke.Color = Color3.fromRGB(255, 255, 255)
+MenuStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+MenuStroke.Parent = Menu
+
+local MenuGradient = Instance.new("UIGradient")
+MenuGradient.Color = ColorSequence.new({
+	ColorSequenceKeypoint.new(0.00, THEME.Accent),
+	ColorSequenceKeypoint.new(0.25, THEME.BorderSubtle),
+	ColorSequenceKeypoint.new(0.50, THEME.AccentDark),
+	ColorSequenceKeypoint.new(0.75, THEME.BorderSubtle),
+	ColorSequenceKeypoint.new(1.00, THEME.Accent)
+})
+MenuGradient.Rotation = 0
+MenuGradient.Parent = MenuStroke
+
+-- Bucle de rotación de borde
+task.spawn(function()
+	local rot = 0
+	while true do
+		rot = (rot + 1.5) % 360
+		MenuGradient.Rotation = rot
+		task.wait(0.016)
+	end
+end)
+
+-- ----------------------------------------------------------------------------
+-- 4. CABECERA & CLOSEAREA (PÍLDORA DE MINIMIZADO)
+-- ----------------------------------------------------------------------------
+-- Zona superior táctil para minimizar o arrastrar
+local CloseArea = Instance.new("TextButton")
+CloseArea.Name = "CloseArea"
+CloseArea.Size = UDim2.new(0, 120, 0, 24)
+CloseArea.AnchorPoint = Vector2.new(0.5, 0)
+CloseArea.Position = UDim2.new(0.5, 0, 0, 4)
+CloseArea.BackgroundTransparency = 1
+CloseArea.Text = ""
+CloseArea.Parent = Menu
+
+local ClosePill = Instance.new("Frame")
+ClosePill.Size = UDim2.new(0, 56, 0, 4)
+ClosePill.AnchorPoint = Vector2.new(0.5, 0.5)
+ClosePill.Position = UDim2.new(0.5, 0, 0.4, 0)
+ClosePill.BackgroundColor3 = Color3.fromRGB(80, 85, 100)
+ClosePill.BorderSizePixel = 0
+ClosePill.Parent = CloseArea
+
+local PillCorner = Instance.new("UICorner")
+PillCorner.CornerRadius = UDim.new(1, 0)
+PillCorner.Parent = ClosePill
+
+-- Título YARHM / Crimson Blade
+local TitleBox = Instance.new("Frame")
+TitleBox.Name = "TitleBox"
+TitleBox.Size = UDim2.new(1, -24, 0, 28)
+TitleBox.Position = UDim2.new(0, 16, 0, 10)
+TitleBox.BackgroundTransparency = 1
+TitleBox.Parent = Menu
+
+local TitleText = Instance.new("TextLabel")
+TitleText.Size = UDim2.new(1, 0, 1, 0)
+TitleText.BackgroundTransparency = 1
+TitleText.Text = "CRIMSON BLADE <font color='#656A7A' size='9'>1.0</font>"
+TitleText.RichText = true
+TitleText.TextColor3 = THEME.TextLight
+TitleText.Font = Enum.Font.GothamBold
+TitleText.TextSize = 13
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+TitleText.Parent = TitleBox
+
+-- ----------------------------------------------------------------------------
+-- 5. CUERPO (LISTA LATERAL + CONTENEDOR DE CONTENIDO)
+-- ----------------------------------------------------------------------------
+local Body = Instance.new("Frame")
+Body.Name = "Body"
+Body.Size = UDim2.new(1, -24, 1, -48)
+Body.Position = UDim2.new(0, 12, 0, 38)
+Body.BackgroundTransparency = 1
+Body.Parent = Menu
+
+-- Lista Lateral Izquierda (List)
+local ListFrame = Instance.new("Frame")
+ListFrame.Name = "List"
+ListFrame.Size = UDim2.new(0.28, 0, 1, 0)
+ListFrame.BackgroundColor3 = THEME.SidebarBg
+ListFrame.BorderSizePixel = 0
+ListFrame.Parent = Body
+
+local ListCorner = Instance.new("UICorner")
+ListCorner.CornerRadius = UDim.new(0, 14)
+ListCorner.Parent = ListFrame
+
+local ListScroll = Instance.new("ScrollingFrame")
+ListScroll.Size = UDim2.new(1, -8, 1, -12)
+ListScroll.Position = UDim2.new(0, 4, 0, 6)
+ListScroll.BackgroundTransparency = 1
+ListScroll.BorderSizePixel = 0
+ListScroll.ScrollBarThickness = 0
+ListScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+ListScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+ListScroll.Parent = ListFrame
+
+local ListLayout = Instance.new("UIListLayout")
+ListLayout.Padding = UDim.new(0, 6)
+ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ListLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+ListLayout.Parent = ListScroll
+
+-- Área de Contenido Derecha (Area)
+local AreaFrame = Instance.new("Frame")
+AreaFrame.Name = "Area"
+AreaFrame.Size = UDim2.new(0.70, 0, 1, 0)
+AreaFrame.Position = UDim2.new(0.30, 0, 0, 0)
+AreaFrame.BackgroundTransparency = 1
+AreaFrame.Parent = Body
+
+-- ----------------------------------------------------------------------------
+-- 6. BOTÓN FLOTANTE MINIMIZADO (EXACTO SQUIRCLE DE LA CAPTURA 2)
+-- ----------------------------------------------------------------------------
+local FloatingIcon = Instance.new("TextButton")
+FloatingIcon.Name = "FloatingIcon"
+FloatingIcon.Size = UDim2.fromOffset(50, 50)
+FloatingIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+FloatingIcon.Position = UDim2.new(0.5, 0, 0.08, 0)
+FloatingIcon.BackgroundColor3 = Color3.fromRGB(245, 245, 250) -- Blanco elegante como tu captura
+FloatingIcon.BorderSizePixel = 0
+FloatingIcon.AutoButtonColor = false
+FloatingIcon.Visible = false
+FloatingIcon.Parent = ScreenGui
+
+local FloatScale = Instance.new("UIScale")
+FloatScale.Scale = 0
+FloatScale.Parent = FloatingIcon
+
+local FloatCorner = Instance.new("UICorner")
+FloatCorner.CornerRadius = UDim.new(0, 14)
+FloatCorner.Parent = FloatingIcon
+
+local FloatStroke = Instance.new("UIStroke")
+FloatStroke.Thickness = 2
+FloatStroke.Color = THEME.Accent
+FloatStroke.Parent = FloatingIcon
+
+-- Icono del Logo Carmesí central
+local FloatLogo = Instance.new("ImageLabel")
+FloatLogo.Name = "Logo"
+FloatLogo.Size = UDim2.new(0, 30, 0, 30)
+FloatLogo.AnchorPoint = Vector2.new(0.5, 0.5)
+FloatLogo.Position = UDim2.new(0.5, 0, 0.5, 0)
+FloatLogo.BackgroundTransparency = 1
+FloatLogo.Image = "rbxassetid://17864987433" -- Icono geométrico rombo/diamante exacto de YARHM
+FloatLogo.ImageColor3 = THEME.Accent
+FloatLogo.Parent = FloatingIcon
+
+-- ----------------------------------------------------------------------------
+-- 7. SISTEMA DE ARRASTRE FLUIDO (SIN RETRASO / 0 LAG)
+-- ----------------------------------------------------------------------------
+local function EnableDragging(handle: GuiObject, target: GuiObject, onEndCallback)
+	local dragging = false
+	local dragStart = Vector2.zero
+	local startPos = UDim2.new()
+
+	handle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = Vector2.new(input.Position.X, input.Position.Y)
+			startPos = target.Position
+
+			local endConn
+			endConn = UserInputService.InputEnded:Connect(function(endInput)
+				if endInput.UserInputType == Enum.UserInputType.MouseButton1 or endInput.UserInputType == Enum.UserInputType.Touch then
+					if dragging then
+						dragging = false
+						endConn:Disconnect()
+						if onEndCallback then onEndCallback(target) end
+					end
+				end
+			end)
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local current = Vector2.new(input.Position.X, input.Position.Y)
+			local delta = current - dragStart
+			local vSize = Camera.ViewportSize
+
+			local finalX = startPos.X.Offset + delta.X
+			local finalY = startPos.Y.Offset + delta.Y
+
+			-- Mantener dentro de los bordes
+			local cX = math.clamp(finalX, target.AbsoluteSize.X * target.AnchorPoint.X, vSize.X - (target.AbsoluteSize.X * (1 - target.AnchorPoint.X)))
+			local cY = math.clamp(finalY, target.AbsoluteSize.Y * target.AnchorPoint.Y, vSize.Y - (target.AbsoluteSize.Y * (1 - target.AnchorPoint.Y)))
+
+			target.Position = UDim2.new(startPos.X.Scale, cX, startPos.Y.Scale, cY)
+		end
+	end)
+end
+
+-- Arrastre de ventana principal desde la barra superior
+EnableDragging(TitleBox, Menu)
+EnableDragging(CloseArea, Menu)
+
+-- Arrastre del Botón Flotante con auto-acoplamiento magnético
+EnableDragging(FloatingIcon, FloatingIcon, function(btn)
+	local vSize = Camera.ViewportSize
+	local curX = btn.Position.X.Offset + (btn.Position.X.Scale * vSize.X)
+	local curY = btn.Position.Y.Offset + (btn.Position.Y.Scale * vSize.Y)
+
+	local snapX = (curX < vSize.X * 0.5) and 35 or (vSize.X - 35)
+	local snapY = math.clamp(curY, 40, vSize.Y - 40)
+
+	TweenService:Create(btn, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+		Position = UDim2.fromOffset(snapX, snapY)
+	}):Play()
+end)
+
+-- ----------------------------------------------------------------------------
+-- 8. ANIMACIONES DE MINIMIZAR / RESTAURAR
+-- ----------------------------------------------------------------------------
+local function SetMenuOpen(open: boolean)
+	IS_OPEN = open
+	if open then
+		-- Ocultar icono flotante
+		local hideFloat = TweenService:Create(FloatScale, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In), { Scale = 0 })
+		hideFloat:Play()
+		hideFloat.Completed:Connect(function()
+			FloatingIcon.Visible = false
+		end)
+
+		-- Expandir menú con rebote elástico suave
+		Menu.Visible = true
+		MenuScale.Scale = 0.5
+		TweenService:Create(MenuScale, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+			Scale = 1
+		}):Play()
+	else
+		-- Encoger menú
+		local shrink = TweenService:Create(MenuScale, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.In), { Scale = 0 })
+		shrink:Play()
+		shrink.Completed:Connect(function()
+			Menu.Visible = false
+
+			-- Mostrar icono flotante con pop elástico
+			FloatingIcon.Visible = true
+			FloatScale.Scale = 0
+			TweenService:Create(FloatScale, TweenInfo.new(0.45, Enum.EasingStyle.Elastic, Enum.EasingDirection.Out), {
+				Scale = 1
+			}):Play()
+		end)
+	end
+end
+
+CloseArea.MouseButton1Click:Connect(function() SetMenuOpen(false) end)
+FloatingIcon.MouseButton1Click:Connect(function() SetMenuOpen(true) end)
+
+-- ----------------------------------------------------------------------------
+-- 9. GESTOR DE PESTAÑAS (TABS CON PÍLDORA BLANCA ACTIVA EXACTA)
+-- ----------------------------------------------------------------------------
+local Pages = {}
+local TabButtons = {}
+local currentTab = nil
+
+local function AddTab(name: string, isDefault: boolean)
+	-- Página Deslizable
+	local Page = Instance.new("ScrollingFrame")
+	Page.Name = name .. "_Page"
+	Page.Size = UDim2.new(1, 0, 1, 0)
+	Page.BackgroundTransparency = 1
+	Page.BorderSizePixel = 0
+	Page.ScrollBarThickness = 2
+	Page.ScrollBarImageColor3 = THEME.Accent
+	Page.CanvasSize = UDim2.new(0, 0, 0, 0)
+	Page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	Page.Visible = false
+	Page.Parent = AreaFrame
+
+	local PageLayout = Instance.new("UIListLayout")
+	PageLayout.Padding = UDim.new(0, 8)
+	PageLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	PageLayout.Parent = Page
+
+	Pages[name] = Page
+
+	-- Botón lateral (Píldora blanca cuando está activo)
+	local TabBtn = Instance.new("TextButton")
+	TabBtn.Name = name .. "_TabBtn"
+	TabBtn.Size = UDim2.new(1, -8, 0, 36)
+	TabBtn.BackgroundColor3 = THEME.SidebarBg
+	TabBtn.Text = name
+	TabBtn.TextColor3 = THEME.TextDim
+	TabBtn.Font = Enum.Font.GothamBold
+	TabBtn.TextSize = 11
+	TabBtn.AutoButtonColor = false
+	TabBtn.Parent = ListScroll
+
+	local TabCorner = Instance.new("UICorner")
+	TabCorner.CornerRadius = UDim.new(0, 10)
+	TabCorner.Parent = TabBtn
+
+	TabButtons[name] = TabBtn
+
+	local function SelectTab()
+		if currentTab == name then return end
+		currentTab = name
+
+		for tabN, btn in pairs(TabButtons) do
+			local active = (tabN == name)
+			Pages[tabN].Visible = active
+
+			if active then
+				-- Píldora Blanca con Texto Negro (Exacto a la captura)
+				TweenService:Create(btn, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					BackgroundColor3 = THEME.CardActive,
+					TextColor3 = THEME.TextDark
+				}):Play()
+			else
+				-- Botón inactivo
+				TweenService:Create(btn, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+					BackgroundColor3 = THEME.SidebarBg,
+					TextColor3 = THEME.TextDim
+				}):Play()
+			end
+		end
+	end
+
+	TabBtn.MouseButton1Click:Connect(SelectTab)
+
+	if isDefault then
+		SelectTab()
+	end
+
+	return Page
+end
+
+-- ----------------------------------------------------------------------------
+-- 10. COMPONENTES VISUALES (ELEMENTOS INTERACTIVOS ESTILO YARHM)
+-- ----------------------------------------------------------------------------
+local Elements = {}
+
+-- Texto decorativo / Subtítulo
+function Elements.AddLabel(page: Instance, text: string, color: Color3?)
+	local Label = Instance.new("TextLabel")
+	Label.Size = UDim2.new(1, 0, 0, 18)
+	Label.BackgroundTransparency = 1
+	Label.Text = text
+	Label.TextColor3 = color or THEME.TextLight
+	Label.Font = Enum.Font.GothamBold
+	Label.TextSize = 11
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.Parent = page
+	return Label
+end
+
+-- Tarjeta con botón
+function Elements.AddButton(page: Instance, text: string, callback: () -> ())
+	local Card = Instance.new("TextButton")
+	Card.Size = UDim2.new(1, 0, 0, 36)
+	Card.BackgroundColor3 = THEME.CardBg
+	Card.Text = ""
+	Card.AutoButtonColor = false
+	Card.Parent = page
+
+	local Corner = Instance.new("UICorner")
+	Corner.CornerRadius = UDim.new(1, 0)
+	Corner.Parent = Card
+
+	local Label = Instance.new("TextLabel")
+	Label.Size = UDim2.new(1, -40, 1, 0)
+	Label.Position = UDim2.new(0, 14, 0, 0)
+	Label.BackgroundTransparency = 1
+	Label.Text = text
+	Label.TextColor3 = THEME.TextLight
+	Label.Font = Enum.Font.GothamBold
+	Label.TextSize = 11
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.Parent = Card
+
+	local Dot = Instance.new("Frame")
+	Dot.Size = UDim2.fromOffset(14, 14)
+	Dot.AnchorPoint = Vector2.new(1, 0.5)
+	Dot.Position = UDim2.new(1, -12, 0.5, 0)
+	Dot.BackgroundColor3 = Color3.fromRGB(120, 125, 140)
+	Dot.BorderSizePixel = 0
+	Dot.Parent = Card
+
+	local DotCorner = Instance.new("UICorner")
+	DotCorner.CornerRadius = UDim.new(1, 0)
+	DotCorner.Parent = Dot
+
+	Card.MouseButton1Down:Connect(function()
+		TweenService:Create(Dot, TweenInfo.new(0.1), { BackgroundColor3 = THEME.Accent }):Play()
+	end)
+
+	local function Release()
+		TweenService:Create(Dot, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(120, 125, 140) }):Play()
+	end
+
+	Card.MouseButton1Up:Connect(function()
+		Release()
+		if callback then callback() end
+	end)
+	Card.MouseLeave:Connect(Release)
+end
+
+-- Interruptor Toggle (Estilo iOS / YARHM)
+function Elements.AddToggle(page: Instance, text: string, default: boolean, callback: (boolean) -> ())
+	local state = default or false
+
+	local Card = Instance.new("TextButton")
+	Card.Size = UDim2.new(1, 0, 0, 36)
+	Card.BackgroundColor3 = THEME.CardBg
+	Card.Text = ""
+	Card.AutoButtonColor = false
+	Card.Parent = page
+
+	local Corner = Instance.new("UICorner")
+	Corner.CornerRadius = UDim.new(1, 0)
+	Corner.Parent = Card
+
+	local Label = Instance.new("TextLabel")
+	Label.Size = UDim2.new(1, -60, 1, 0)
+	Label.Position = UDim2.new(0, 14, 0, 0)
+	Label.BackgroundTransparency = 1
+	Label.Text = text
+	Label.TextColor3 = THEME.TextLight
+	Label.Font = Enum.Font.GothamBold
+	Label.TextSize = 11
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.Parent = Card
+
+	-- Base del switch (Track)
+	local Track = Instance.new("Frame")
+	Track.Size = UDim2.new(0, 36, 0, 18)
+	Track.AnchorPoint = Vector2.new(1, 0.5)
+	Track.Position = UDim2.new(1, -12, 0.5, 0)
+	Track.BackgroundColor3 = state and THEME.Accent or Color3.fromRGB(40, 42, 50)
+	Track.BorderSizePixel = 0
+	Track.Parent = Card
+
+	local TrackCorner = Instance.new("UICorner")
+	TrackCorner.CornerRadius = UDim.new(1, 0)
+	TrackCorner.Parent = Track
+
+	-- Pastilla blanca móvil (Knob)
+	local Knob = Instance.new("Frame")
+	Knob.Size = UDim2.new(0, 14, 0, 14)
+	Knob.Position = state and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7)
+	Knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	Knob.BorderSizePixel = 0
+	Knob.Parent = Track
+
+	local KnobCorner = Instance.new("UICorner")
+	KnobCorner.CornerRadius = UDim.new(1, 0)
+	KnobCorner.Parent = Knob
+
+	Card.MouseButton1Click:Connect(function()
+		state = not state
+		TweenService:Create(Track, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			BackgroundColor3 = state and THEME.Accent or Color3.fromRGB(40, 42, 50)
+		}):Play()
+		TweenService:Create(Knob, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+			Position = state and UDim2.new(1, -16, 0.5, -7) or UDim2.new(0, 2, 0.5, -7)
+		}):Play()
+		if callback then callback(state) end
+	end)
+end
+
+-- Deslizador Slider
+function Elements.AddSlider(page: Instance, text: string, min: number, max: number, default: number, callback: (number) -> ())
+	local currentVal = default or min
+
+	local Card = Instance.new("Frame")
+	Card.Size = UDim2.new(1, 0, 0, 42)
+	Card.BackgroundColor3 = THEME.CardBg
+	Card.BorderSizePixel = 0
+	Card.Parent = page
+
+	local Corner = Instance.new("UICorner")
+	Corner.CornerRadius = UDim.new(0, 12)
+	Corner.Parent = Card
+
+	local Label = Instance.new("TextLabel")
+	Label.Size = UDim2.new(1, -60, 0, 16)
+	Label.Position = UDim2.new(0, 14, 0, 6)
+	Label.BackgroundTransparency = 1
+	Label.Text = text
+	Label.TextColor3 = THEME.TextLight
+	Label.Font = Enum.Font.GothamBold
+	Label.TextSize = 11
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.Parent = Card
+
+	local ValLabel = Instance.new("TextLabel")
+	ValLabel.Size = UDim2.new(0, 45, 0, 16)
+	ValLabel.Position = UDim2.new(1, -55, 0, 6)
+	ValLabel.BackgroundTransparency = 1
+	ValLabel.Text = tostring(currentVal)
+	ValLabel.TextColor3 = THEME.Accent
+	ValLabel.Font = Enum.Font.GothamBold
+	ValLabel.TextSize = 11
+	ValLabel.TextXAlignment = Enum.TextXAlignment.Right
+	ValLabel.Parent = Card
+
+	local Track = Instance.new("Frame")
+	Track.Size = UDim2.new(1, -28, 0, 4)
+	Track.Position = UDim2.new(0, 14, 0, 28)
+	Track.BackgroundColor3 = Color3.fromRGB(35, 38, 46)
+	Track.BorderSizePixel = 0
+	Track.Parent = Card
+
+	local TrackCorner = Instance.new("UICorner")
+	TrackCorner.CornerRadius = UDim.new(1, 0)
+	TrackCorner.Parent = Track
+
+	local Fill = Instance.new("Frame")
+	local pct = math.clamp((currentVal - min) / (max - min), 0, 1)
+	Fill.Size = UDim2.new(pct, 0, 1, 0)
+	Fill.BackgroundColor3 = THEME.Accent
+	Fill.BorderSizePixel = 0
+	Fill.Parent = Track
+
+	local FillCorner = Instance.new("UICorner")
+	FillCorner.CornerRadius = UDim.new(1, 0)
+	FillCorner.Parent = Fill
+
+	local dragging = false
+	local function UpdateSlider(xPos)
+		local rel = math.clamp((xPos - Track.AbsolutePosition.X) / Track.AbsoluteSize.X, 0, 1)
+		currentVal = math.floor(min + ((max - min) * rel))
+		ValLabel.Text = tostring(currentVal)
+		Fill.Size = UDim2.new(rel, 0, 1, 0)
+		if callback then callback(currentVal) end
+	end
+
+	Card.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			UpdateSlider(input.Position.X)
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			UpdateSlider(input.Position.X)
+		end
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+end
+
+-- ----------------------------------------------------------------------------
+-- 11. GENERACIÓN DE PESTAÑAS Y DEMO (CRIMSON BLADE)
+-- ----------------------------------------------------------------------------
+local TabUniversal = AddTab("Universal", true)
+local TabForsaken  = AddTab("Forsaken", false)
+local TabCombat    = AddTab("Combate", false)
+local TabSettings  = AddTab("Ajustes", false)
+
+-- Pestaña Universal (Similar a la captura)
+Elements.AddLabel(TabUniversal, "Servicio Crimson Blade", Color3.fromRGB(255, 215, 0))
+Elements.AddButton(TabUniversal, "Unirse a la comunidad", function()
+	print("[Crimson Blade] Enlace copiado!")
+end)
+Elements.AddToggle(TabUniversal, "Modo Vuelo OP", false, function(state)
+	print("Vuelo:", state)
+end)
+Elements.AddSlider(TabUniversal, "Velocidad de Vuelo", 16, 250, 60, function(val)
+	print("Velocidad:", val)
+end)
+
+-- Pestaña Forsaken
+Elements.AddToggle(TabForsaken, "Indicador de Asesino", true, function(state)
+	print("ESP:", state)
+end)
+
+-- Pestaña Ajustes
+Elements.AddButton(TabSettings, "Minimizar Menú", function()
+	SetMenuOpen(false)
+end)
+
+-- Animación de entrada inicial
+MenuScale.Scale = 0.4
+TweenService:Create(MenuScale, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
