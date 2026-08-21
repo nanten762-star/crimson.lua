@@ -1,0 +1,881 @@
+-- ==========================================================
+--  CRIMSON BLADE - HIGH-END MM2 & UNIVERSAL SUITE
+--  Kinematic Ballistic Engine v2 + True Silent Aim & Ghost Knife
+-- ==========================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local VirtualUser = game:GetService("VirtualUser")
+local UserInputService = game:GetService("UserInputService")
+local TextChatService = game:GetService("TextChatService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- [[ CONSTANTES BALÍSTICAS MM2 ]]
+local BULLET_SPEED = 1000
+
+-- [[ CONTENEDORES DE DATOS GLOBALES ]]
+local playerDataESP = {}
+local gamePlayerData = {}
+getgenv().targetPlayerInputText = ""
+
+-- [[ ESTADO SILENT AIM ]]
+local silentAimEnabled = true
+local silentAimFOV = 200
+local useFOVCheck = false
+
+local autoShootMurderer = false
+local killClosestEnabled = false
+local antiFlingActive = false
+local antiFlingLastPos = Vector3.zero
+
+local hitboxEnabled = false
+local hitboxSizeValue = 8
+
+local cachedMurderer = nil
+local gunButtonGui = nil
+local knifeButtonGui = nil
+
+local MobileTargetGui = nil
+if gethui then
+    MobileTargetGui = gethui()
+else
+    MobileTargetGui = game:GetService("CoreGui")
+end
+
+-- [[ BUSCADORES DE ROLES ]]
+local function getPlayerByName(list)
+    if list == nil or list == "" then return nil end
+    local broken = {}
+    for w in string.gmatch(list, "[^,]+") do table.insert(broken, w) end
+    for _, name in pairs(broken) do
+        local n, len = string.lower(name), #name
+        for _, v in pairs(Players:GetPlayers()) do
+            if string.sub(string.lower(v.Name), 1, len) == n or string.sub(string.lower(v.DisplayName), 1, len) == n then
+                return v
+            end
+        end
+    end
+    return nil
+end
+
+local function findMurderer()
+    if playerDataESP then
+        for player, data in pairs(playerDataESP) do
+            if data.Role == "Murderer" and Players:FindFirstChild(player) then
+                local p = Players:FindFirstChild(player)
+                if p and p.Character and p.Character:FindFirstChild("Humanoid") and p.Character.Humanoid.Health > 0 then
+                    return p
+                end
+            end
+        end
+    end
+    if gamePlayerData then
+        for player, data in pairs(gamePlayerData) do
+            if data.Role == "Murderer" and Players:FindFirstChild(player) then
+                local p = Players:FindFirstChild(player)
+                if p and p.Character and p.Character:FindFirstChild("Humanoid") and p.Character.Humanoid.Health > 0 then
+                    return p
+                end
+            end
+        end
+    end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0 then
+            if (player:FindFirstChild("Backpack") and player.Backpack:FindFirstChild("Knife")) or player.Character:FindFirstChild("Knife") then 
+                return player 
+            end
+        end
+    end
+    return nil
+end
+
+local function findSheriff()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0 then
+            local backpack = player:FindFirstChild("Backpack")
+            if (backpack and backpack:FindFirstChild("Gun")) or player.Character:FindFirstChild("Gun") then
+                return player
+            end
+        end
+    end
+    return nil
+end
+
+local function findSheriffNotMe()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0 then
+            local backpack = player:FindFirstChild("Backpack")
+            if (backpack and backpack:FindFirstChild("Gun")) or player.Character:FindFirstChild("Gun") then
+                return player
+            end
+        end
+    end
+    return nil
+end
+
+local function findNearestPlayer()
+    local nearestPlayer = nil
+    local shortestDistance = math.huge
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then 
+            local otherRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+            local otherHum = player.Character:FindFirstChildOfClass("Humanoid")
+            if otherRootPart and otherHum and otherHum.Health > 0 then
+                local distance = (LocalPlayer.Character.HumanoidRootPart.Position - otherRootPart.Position).Magnitude
+                if distance < shortestDistance then
+                    shortestDistance = distance
+                    nearestPlayer = player
+                end
+            end
+        end
+    end
+    return nearestPlayer
+end
+
+local function getMap()
+    for _, o in ipairs(Workspace:GetChildren()) do
+        if o:FindFirstChild("CoinContainer") and o:FindFirstChild("Spawns") then
+            return o
+        end
+    end
+    return nil
+end
+
+-- [[ RESTAURADORES DE ESTADO ]]
+local function resetRoundCombatStates()
+    killClosestEnabled = false
+    autoShootMurderer = false
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            p.Character.HumanoidRootPart.Anchored = false
+        end
+    end
+end
+
+local function restoreOriginalHitboxes()
+    for _, v in pairs(Players:GetPlayers()) do 
+        if v ~= LocalPlayer and v.Character and v.Character:FindFirstChild("HumanoidRootPart") then 
+            local h = v.Character.HumanoidRootPart
+            h.Size = Vector3.new(2, 2, 1)
+            h.Transparency = 1
+            h.CanCollide = true 
+        end 
+    end 
+end
+
+-- [[ MOTOR DE FLING ]]
+local function executeFlingAction(targetPlayer)
+    if not targetPlayer or targetPlayer == LocalPlayer then return end
+    pcall(function()
+        local Character = LocalPlayer.Character
+        local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+        local RootPart = Humanoid and Humanoid.RootPart
+        local TCharacter = targetPlayer.Character
+        local THumanoid = TCharacter and TCharacter:FindFirstChildOfClass("Humanoid")
+        local TRootPart = THumanoid and THumanoid.RootPart
+        local THead = TCharacter and TCharacter:FindFirstChild("Head")
+        
+        if Character and Humanoid and RootPart and THumanoid and TRootPart then
+            getgenv().OldPos = RootPart.CFrame
+            getgenv().FPDH = Workspace.FallenPartsDestroyHeight
+            Workspace.CurrentCamera.CameraSubject = THead or TRootPart
+
+            Workspace.FallenPartsDestroyHeight = 0/0
+            local BV = Instance.new("BodyVelocity")
+            BV.Parent = RootPart
+            BV.Velocity = Vector3.new(9e8, 9e8 * 12, 9e8)
+            BV.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+            Humanoid.PlatformStand = true
+
+            local BaseTargetPart = THead or TRootPart
+            if BaseTargetPart then
+                local TimeToWait = 2
+                local Time = tick()
+                local Angle = 0
+                repeat
+                    if RootPart and THumanoid and BaseTargetPart.Parent then
+                        Angle = Angle + 100
+                        RootPart.CFrame = CFrame.new(BaseTargetPart.Position) * CFrame.new(0, 1.5, 0) * CFrame.Angles(math.rad(Angle), 0, 0)
+                        task.wait()
+                    else
+                        break
+                    end
+                until BaseTargetPart.Velocity.Magnitude > 500 or targetPlayer.Parent ~= Players or Humanoid.Health <= 0 or tick() > Time + TimeToWait
+            end
+
+            BV:Destroy()
+            Humanoid.PlatformStand = false
+            Workspace.CurrentCamera.CameraSubject = Humanoid
+            task.wait(0.05)
+            RootPart.CFrame = getgenv().OldPos
+            RootPart.Velocity = Vector3.zero
+            RootPart.RotVelocity = Vector3.zero
+            Workspace.FallenPartsDestroyHeight = getgenv().FPDH
+        end
+    end)
+end
+
+-- [[ VARIABLES DE ESTADO ]]
+local aimbotEnabled = false
+local aimbotConn = nil
+local autoPickupEnabled = false
+local targetSpeed = 16
+
+local airWalkEnabled = false
+local airWalkPlatform = nil
+local noclipConnection = nil
+local airWalkConnection = nil
+local currentAirWalkHeight = 0
+
+-- [[ MÓDULO DE VUELO ]]
+local isFlying = false
+local flyMaxSpeed = 50
+local flyAcceleration = 2
+local currentFlySpeed = 0
+local flyDirection = Vector3.zero
+local flyBodyGyro = nil
+local flyBodyVel = nil
+local flyConnection = nil
+
+local function startFly()
+    if isFlying then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hum or not hrp then return end
+
+    isFlying = true
+    flyBodyGyro = Instance.new("BodyGyro")
+    flyBodyGyro.P = 100000
+    flyBodyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+    flyBodyGyro.CFrame = hrp.CFrame
+    flyBodyGyro.Parent = hrp
+
+    flyBodyVel = Instance.new("BodyVelocity")
+    flyBodyVel.P = 10000
+    flyBodyVel.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    flyBodyVel.Velocity = Vector3.zero
+    flyBodyVel.Parent = hrp
+    hum.PlatformStand = true
+
+    flyConnection = RunService.Heartbeat:Connect(function()
+        local character = LocalPlayer.Character
+        if not isFlying or not character then 
+            if flyConnection then flyConnection:Disconnect() end
+            return 
+        end
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        local root = character:FindFirstChild("HumanoidRootPart")
+        local cam = Workspace.CurrentCamera
+        if not humanoid or humanoid.Health <= 0 or not root or not cam then return end
+
+        local moveDir = humanoid.MoveDirection
+        if moveDir.Magnitude > 0.01 then
+            currentFlySpeed = math.min(flyMaxSpeed, currentFlySpeed + flyAcceleration)
+            flyDirection = moveDir.Unit
+        else
+            currentFlySpeed = math.max(0, currentFlySpeed - flyAcceleration)
+        end
+
+        local flatMove = Vector3.new(flyDirection.X, 0, flyDirection.Z)
+        local velVector = flatMove.Unit * currentFlySpeed
+        local lookVec = cam.CFrame.LookVector.Unit
+        local dot = flyDirection:Dot(lookVec)
+        local sign = dot < 0 and -1 or 1
+        local flatLook = Vector3.new(lookVec.X, 0, lookVec.Z)
+        if flatLook.Magnitude > 0 then flatLook = flatLook.Unit end
+        local align = math.abs(flyDirection:Dot(flatLook))
+        local yMove = lookVec.Y * sign * align * currentFlySpeed
+
+        flyBodyVel.Velocity = Vector3.new(velVector.X, yMove, velVector.Z)
+        flyBodyGyro.CFrame = CFrame.new(root.Position, root.Position + lookVec)
+    end)
+end
+
+local function stopFly()
+    if not isFlying then return end
+    if flyConnection then flyConnection:Disconnect() flyConnection = nil end
+    if flyBodyGyro then flyBodyGyro:Destroy() flyBodyGyro = nil end
+    if flyBodyVel then flyBodyVel:Destroy() flyBodyVel = nil end
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.PlatformStand = false end
+    end
+    isFlying = false
+    currentFlySpeed = 0
+end
+
+local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
+
+-- ==========================================================
+-- GESTIÓN DE ROLES Y EVENTOS MM2
+-- ==========================================================
+local globalRemotes = ReplicatedStorage:WaitForChild("Remotes", 5)
+if globalRemotes and globalRemotes:FindFirstChild("Gameplay") and globalRemotes.Gameplay:FindFirstChild("PlayerDataChanged") then
+	globalRemotes.Gameplay.PlayerDataChanged.OnClientEvent:Connect(function(data)
+		gamePlayerData = data
+        local hasMurd = false
+		for player, info in pairs(data) do
+			if info.Role == "Murderer" then
+				cachedMurderer = Players:FindFirstChild(player)
+                hasMurd = true
+			end
+		end
+        if not hasMurd then
+            cachedMurderer = nil
+            resetRoundCombatStates()
+        end
+	end)
+end
+
+task.spawn(function()
+	while true do
+		if not cachedMurderer then
+			for _, i in ipairs(Players:GetPlayers()) do
+				if (i:FindFirstChild("Backpack") and i.Backpack:FindFirstChild("Knife")) or (i.Character and i.Character:FindFirstChild("Knife")) then
+					cachedMurderer = i
+					break
+				end
+			end
+		end
+		task.wait(1.5)
+	end
+end)
+
+-- ==========================================================
+-- MOTOR BALÍSTICO CINEMÁTICO (CORREGIDO PARA MM2)
+-- ==========================================================
+local function getKinematicPredictedPosition(targetPlayer, originPos, projSpeed)
+    if not targetPlayer or not targetPlayer.Character then return nil end
+    
+    local char = targetPlayer.Character
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or root
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    
+    if not root or not torso or not hum or hum.Health <= 0 then return nil end
+
+    local currentPos = torso.Position
+    local rawVelocity = root.AssemblyLinearVelocity
+    local moveDir = hum.MoveDirection
+    local walkSpeed = hum.WalkSpeed or 16
+
+    -- Menor predicción de red para evitar fallar balas rápidas
+    local pingSeconds = math.clamp(LocalPlayer:GetNetworkPing(), 0.015, 0.1)
+
+    local effectiveHorizVel = Vector3.new(rawVelocity.X, 0, rawVelocity.Z)
+    if moveDir.Magnitude > 0.05 then
+        effectiveHorizVel = moveDir.Unit * walkSpeed
+    else
+        effectiveHorizVel = effectiveHorizVel * 0.5 
+    end
+
+    local distance = (currentPos - originPos).Magnitude
+    local timeToHit = pingSeconds + (distance / projSpeed)
+    
+    local predX = currentPos.X + (effectiveHorizVel.X * timeToHit)
+    local predZ = currentPos.Z + (effectiveHorizVel.Z * timeToHit)
+    local predY = currentPos.Y
+
+    if hum.FloorMaterial == Enum.Material.Air or math.abs(rawVelocity.Y) > 2 then
+        predY = currentPos.Y + (rawVelocity.Y * timeToHit) - (0.5 * Workspace.Gravity * (timeToHit ^ 2))
+    end
+
+    return Vector3.new(predX, predY, predZ)
+end
+
+local function isWithinFOV(targetPosition)
+    if not useFOVCheck then return true end
+    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPosition)
+    if not onScreen then return false end
+    
+    local mousePos = UserInputService:GetMouseLocation()
+    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+    return dist <= silentAimFOV
+end
+
+-- ==========================================================
+-- HOOK DE SILENT AIM REAL (__NAMECALL) CORREGIDO
+-- ==========================================================
+if hookmetamethod then
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+
+        if not checkcaller() and silentAimEnabled and method == "FireServer" and tostring(self) == "Shoot" then
+            local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Gun")
+            if tool and self.Parent == tool then
+                local murderer = cachedMurderer or findMurderer() or findSheriffNotMe()
+                if murderer and murderer.Character then
+                    local mTorso = murderer.Character:FindFirstChild("UpperTorso") or murderer.Character:FindFirstChild("Torso") or murderer.Character:FindFirstChild("HumanoidRootPart")
+                    local rightHand = LocalPlayer.Character:FindFirstChild("RightHand") or LocalPlayer.Character:FindFirstChild("Right Arm") or LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+
+                    if mTorso and rightHand then
+                        local shootOrigin = rightHand.Position
+
+                        if isWithinFOV(mTorso.Position) then
+                            local rayParams = RaycastParams.new()
+                            rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                            rayParams.FilterDescendantsInstances = {LocalPlayer.Character, murderer.Character}
+                            rayParams.IgnoreWater = true
+
+                            local ray = Workspace:Raycast(shootOrigin, (mTorso.Position - shootOrigin), rayParams)
+                            local wallBlocking = (ray and ray.Instance and ray.Instance.CanCollide and ray.Instance.Transparency < 0.8)
+
+                            if not wallBlocking then
+                                local predictedTargetPos = getKinematicPredictedPosition(murderer, shootOrigin, BULLET_SPEED)
+                                if predictedTargetPos then
+                                    -- CORRECCIÓN: MM2 Shoot requiere el índice 2 como Vector3 Position
+                                    args[2] = predictedTargetPos
+                                    return oldNamecall(self, unpack(args))
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        return oldNamecall(self, ...)
+    end))
+end
+
+local function runShootActionNATIVE()
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local gun = char:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
+    if not gun then return end
+
+    if gun.Parent == backpack then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then hum:EquipTool(gun) end
+        task.wait(0.05)
+    end
+
+    local murderer = cachedMurderer or findMurderer() or findSheriffNotMe()
+    if not murderer or not murderer.Character then return end
+
+    local mRoot = murderer.Character:FindFirstChild("HumanoidRootPart")
+    local mTorso = murderer.Character:FindFirstChild("UpperTorso") or murderer.Character:FindFirstChild("Torso") or mRoot
+    local myRoot = char:FindFirstChild("HumanoidRootPart")
+    local rightHand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm") or myRoot
+    if not mRoot or not mTorso or not myRoot or not rightHand then return end
+
+    local shootOrigin = rightHand.Position
+    local targetPredictedPos = getKinematicPredictedPosition(murderer, shootOrigin, BULLET_SPEED)
+    if not targetPredictedPos then return end
+
+    local shootRemote = gun:FindFirstChild("Shoot")
+    if shootRemote then
+        pcall(function()
+            -- CORRECCIÓN: Evento Shoot nativo con 1 y targetVector3
+            shootRemote:FireServer(1, targetPredictedPos)
+        end)
+    end
+end
+
+-- BUCLE AUTO SHOOT MURDERER
+task.spawn(function()
+    while true do
+        task.wait(0.18)
+        if autoShootMurderer then
+            pcall(function()
+                local hasGun = (LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Gun")) or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Gun"))
+                if hasGun then runShootActionNATIVE() end
+            end)
+        end
+    end
+end)
+
+-- KILL CLOSEST PLAYER
+task.spawn(function()
+    while true do
+        task.wait(0.2)
+        if killClosestEnabled then
+            pcall(function()
+                if findMurderer() == LocalPlayer and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                    local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                    local knife = LocalPlayer.Character:FindFirstChild("Knife")
+                    if not knife then
+                        if LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Knife") and hum then
+                            hum:EquipTool(LocalPlayer.Backpack.Knife)
+                            knife = LocalPlayer.Character:FindFirstChild("Knife")
+                        end
+                    end
+
+                    local target = findNearestPlayer()
+                    if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") and knife then
+                        local tHRP = target.Character.HumanoidRootPart
+                        local myHRP = LocalPlayer.Character.HumanoidRootPart
+                        myHRP.CFrame = tHRP.CFrame * CFrame.new(0, 0, 1.5)
+                        task.wait(0.05)
+                        if knife:FindFirstChild("Stab") then 
+                            knife.Stab:FireServer("Slash") 
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+-- MATAR A TODOS
+local function executeKillEveryone()
+    if findMurderer() ~= LocalPlayer then
+        Rayfield:Notify({Title = "Error", Content = "No eres el Asesino.", Duration = 3})
+        return
+    end
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+
+    local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if not LocalPlayer.Character:FindFirstChild("Knife") then
+        if LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Knife") and hum then
+            hum:EquipTool(LocalPlayer.Backpack.Knife)
+        else
+            return
+        end
+    end
+
+    local myHRP = LocalPlayer.Character.HumanoidRootPart
+    local knife = LocalPlayer.Character:FindFirstChild("Knife")
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local pHum = player.Character:FindFirstChildOfClass("Humanoid")
+            if pHum and pHum.Health > 0 then
+                player.Character.HumanoidRootPart.CFrame = myHRP.CFrame + (myHRP.CFrame.LookVector * 1.5)
+            end
+        end
+    end
+
+    task.wait(0.1)
+    if knife and knife:FindFirstChild("Stab") then knife.Stab:FireServer("Slash") end
+end
+
+-- ==========================================================
+-- BOTONES FLOTANTES MÓVILES (DARK CRIMSON OLED)
+-- ==========================================================
+local function toggleGunButton(state)
+    pcall(function() if gunButtonGui then gunButtonGui:Destroy() gunButtonGui = nil end end)
+    if state then
+        gunButtonGui = Instance.new("ScreenGui")
+        gunButtonGui.Name = "GunButton_Mobile"
+        gunButtonGui.ResetOnSpawn = false
+        gunButtonGui.Parent = MobileTargetGui
+
+        local Btn = Instance.new("TextButton")
+        Btn.Size = UDim2.new(0, 160, 0, 45)
+        Btn.Position = UDim2.new(0.5, -80, 0.35, 0)
+        Btn.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
+        Btn.BackgroundTransparency = 0.15
+        Btn.Font = Enum.Font.GothamBold
+        Btn.Text = "Shoot Murderer (Hit 100%)"
+        Btn.TextColor3 = Color3.fromRGB(245, 245, 245)
+        Btn.TextSize = 11
+        Btn.Active = true
+        Btn.Draggable = true
+        Btn.AutoButtonColor = false
+        Btn.Parent = gunButtonGui
+
+        local Corner = Instance.new("UICorner")
+        Corner.CornerRadius = UDim.new(0, 8)
+        Corner.Parent = Btn
+        local Stroke = Instance.new("UIStroke")
+        Stroke.Thickness = 2
+        Stroke.Color = Color3.fromRGB(180, 25, 35)
+        Stroke.Parent = Btn
+
+        Btn.MouseButton1Click:Connect(function() runShootActionNATIVE() end)
+    end
+end
+
+-- GHOST KNIFE BUTTON CORREGIDO (TELEPORT + STAB = 100% KILL)
+local function toggleKnifeButton(state)
+    pcall(function() if knifeButtonGui then knifeButtonGui:Destroy() knifeButtonGui = nil end end)
+    if state then
+        knifeButtonGui = Instance.new("ScreenGui")
+        knifeButtonGui.Name = "KnifeButton_Mobile"
+        knifeButtonGui.ResetOnSpawn = false
+        knifeButtonGui.Parent = MobileTargetGui
+
+        local Btn = Instance.new("TextButton")
+        Btn.Size = UDim2.new(0, 180, 0, 45)
+        Btn.Position = UDim2.new(0.5, -90, 0.45, 0)
+        Btn.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
+        Btn.BackgroundTransparency = 0.15
+        Btn.Font = Enum.Font.GothamBold
+        Btn.Text = "Ghost Knife Target"
+        Btn.TextColor3 = Color3.fromRGB(245, 245, 245)
+        Btn.TextSize = 12
+        Btn.Active = true
+        Btn.Draggable = true
+        Btn.AutoButtonColor = false
+        Btn.Parent = knifeButtonGui
+
+        local Corner = Instance.new("UICorner")
+        Corner.CornerRadius = UDim.new(0, 8)
+        Corner.Parent = Btn
+        local Stroke = Instance.new("UIStroke")
+        Stroke.Thickness = 2
+        Stroke.Color = Color3.fromRGB(180, 25, 35)
+        Stroke.Parent = Btn
+
+        Btn.MouseButton1Click:Connect(function()
+            pcall(function()
+                local char = LocalPlayer.Character
+                if not char then return end
+
+                local backpack = LocalPlayer:FindFirstChild("Backpack")
+                local knife = char:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
+                if not knife then 
+                    Rayfield:Notify({Title = "Error", Content = "No tienes el cuchillo equipado o en la mochila.", Duration = 3})
+                    return 
+                end
+
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                if knife.Parent == backpack and hum then 
+                    hum:EquipTool(knife) 
+                    task.wait(0.05)
+                end
+
+                local target = findNearestPlayer()
+                if not target or not target.Character then return end
+
+                local myRoot = char:FindFirstChild("HumanoidRootPart")
+                local targetRoot = target.Character:FindFirstChild("HumanoidRootPart")
+                if not myRoot or not targetRoot then return end
+
+                -- Ghost Stab (Teleport rapido, mata, y vuelve)
+                local oldPos = myRoot.CFrame
+                myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 1.2)
+                task.wait(0.05)
+
+                local stabRemote = knife:FindFirstChild("Stab")
+                local throwRemote = knife:FindFirstChild("Throw")
+                
+                if stabRemote then
+                    stabRemote:FireServer("Slash")
+                elseif throwRemote then
+                    -- Si de casualidad no hay Stab, intenta Throw directo a su posición
+                    throwRemote:FireServer(targetRoot.Position)
+                end
+                
+                task.wait(0.05)
+                myRoot.CFrame = oldPos
+            end)
+        end)
+    end
+end
+
+-- ==========================================================
+-- MOTOR ESP (SIN CAMBIOS)
+-- ==========================================================
+local activeHighlights = {}
+local activeGunDropHighlight = nil
+local activeGunDropBillboard = nil
+local espActive = false
+local ignoreInnocents = false
+local gunDropESPActive = false
+
+local function updateGunDropESP()
+    if not espActive and not gunDropESPActive then
+        if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
+        if activeGunDropBillboard then activeGunDropBillboard:Destroy() activeGunDropBillboard = nil end
+        return
+    end
+
+    local gd = Workspace:FindFirstChild("GunDrop", true)
+    if gd then
+        local targetAdornee = (gd:IsA("Model") and (gd.PrimaryPart or gd)) or gd
+        if not activeGunDropHighlight or not activeGunDropHighlight.Parent then
+            if activeGunDropHighlight then activeGunDropHighlight:Destroy() end
+            activeGunDropHighlight = Instance.new("Highlight")
+            activeGunDropHighlight.FillTransparency = 0.5
+            activeGunDropHighlight.OutlineColor = Color3.fromRGB(255, 255, 0)
+            activeGunDropHighlight.FillColor = Color3.fromRGB(255, 255, 0)
+            activeGunDropHighlight.Adornee = gd
+            activeGunDropHighlight.Parent = MobileTargetGui
+        end
+    else
+        if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
+    end
+end
+
+local function applyHighlightToCharacter(player, character)
+    if not espActive or not character then return end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local backpack = player:FindFirstChild("Backpack")
+    
+    local hl = activeHighlights[character]
+    if not hl or not hl.Parent then
+        if hl then hl:Destroy() end
+        hl = Instance.new("Highlight")
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        hl.FillTransparency = 1
+        hl.Adornee = character
+        hl.Parent = MobileTargetGui
+        activeHighlights[character] = hl
+    end
+
+    if humanoid and humanoid.Health <= 0 then
+        hl.Enabled = false
+        return
+    end
+
+    local isMurderer = (player == findMurderer())
+    local isSheriff = (player == findSheriff())
+    local hasGun = (backpack and backpack:FindFirstChild("Gun")) or character:FindFirstChild("Gun") ~= nil
+
+    if ignoreInnocents and not isMurderer and not isSheriff and not hasGun then
+        hl.Enabled = false
+        return
+    end
+
+    local targetColor = Color3.fromRGB(0, 255, 8)
+    if isMurderer then targetColor = Color3.fromRGB(255, 0, 4)
+    elseif (isSheriff or hasGun) then targetColor = Color3.fromRGB(0, 150, 255) end
+
+    hl.OutlineColor = targetColor
+    hl.Enabled = true
+end
+
+local function reloadESP()
+    if not espActive then 
+        for _, h in pairs(activeHighlights) do if h then h:Destroy() end end
+        table.clear(activeHighlights)
+        updateGunDropESP()
+        return 
+    end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player.Character then applyHighlightToCharacter(player, player.Character) end
+    end
+    updateGunDropESP()
+end
+
+local function startESP()
+    espActive = true
+    task.spawn(function()
+        while espActive do
+            reloadESP()
+            task.wait(0.5)
+        end
+    end)
+end
+
+local function stopESP()
+    espActive = false
+    reloadESP()
+end
+
+-- ==========================================================
+-- CREACIÓN DE VENTANA (RAYFIELD)
+-- ==========================================================
+local Window = Rayfield:CreateWindow({
+    Name = "Crimson Blade v2.1",
+    LoadingTitle = "Iniciando Motor High-End",
+    LoadingSubtitle = "Kinematic Ballistics Corregido & Ghost Knife",
+    Theme = "DarkCrimson",
+    DisableRayfieldPrompts = true,
+    ConfigurationSaving = { Enabled = false },
+})
+
+local MainTab = Window:CreateTab("Main", "swords")
+local ESPTab = Window:CreateTab("ESP", "eye")
+local MM2AdvTab = Window:CreateTab("MM2 Advanced", "crosshair")
+
+MainTab:CreateSection("silent aim module")
+
+MainTab:CreateToggle({
+    Name = "Silent Aim (100% Hit)",
+    CurrentValue = true,
+    Flag = "SilentAimFlag",
+    Callback = function(Value) silentAimEnabled = Value end,
+})
+
+MainTab:CreateToggle({
+    Name = "Limit by FOV Circle",
+    CurrentValue = false,
+    Flag = "SilentAimFOVToggle",
+    Callback = function(Value) useFOVCheck = Value end,
+})
+
+MainTab:CreateSection("blatant mobile buttons")
+
+MainTab:CreateToggle({
+    Name = "Gun Button (100% Hit)",
+    CurrentValue = false,
+    Flag = "GunButtonFlag",
+    Callback = function(Value) toggleGunButton(Value) end,
+})
+
+MainTab:CreateToggle({
+    Name = "Ghost Knife Button",
+    Info = "Te teletransporta atrás del más cercano y lo mata instantáneamente.",
+    CurrentValue = false,
+    Flag = "KnifeButtonFlag",
+    Callback = function(Value) toggleKnifeButton(Value) end,
+})
+
+MainTab:CreateButton({
+    Name = "Manual Shoot (Kinematic)",
+    Callback = function() runShootActionNATIVE() end,
+})
+
+ESPTab:CreateSection("visuals radar")
+
+ESPTab:CreateToggle({
+    Name = "Player ESP",
+    CurrentValue = false,
+    Flag = "ESPFlag",
+    Callback = function(Value)
+        if Value then startESP() else stopESP() end
+    end,
+})
+
+ESPTab:CreateToggle({
+    Name = "Hide Innocents",
+    CurrentValue = false,
+    Flag = "IgnoreInnocentsFlag",
+    Callback = function(Value) 
+        ignoreInnocents = Value
+        reloadESP()
+    end,
+})
+
+MM2AdvTab:CreateSection("combat advanced")
+
+MM2AdvTab:CreateToggle({
+    Name = "Auto-Shoot Murderer",
+    CurrentValue = false,
+    Flag = "AutoShootAdvFlag",
+    Callback = function(Value) autoShootMurderer = Value end,
+})
+
+MM2AdvTab:CreateToggle({
+    Name = "Kill Closest Player",
+    CurrentValue = false,
+    Flag = "KillClosestAdvFlag",
+    Callback = function(Value) killClosestEnabled = Value end,
+})
+
+MM2AdvTab:CreateButton({
+    Name = "Kill Everyone",
+    Callback = function() executeKillEveryone() end,
+})
+
+Rayfield:Notify({
+    Title = "Crimson Blade v2.1",
+    Content = "Motor de balas parcheado y Ghost Knife activado.",
+    Duration = 5,
+    Image = 10843394625
+})
