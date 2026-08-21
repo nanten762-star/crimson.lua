@@ -1,6 +1,6 @@
 -- ==========================================================
---  CRIMSON BLADE - HIGH-END MM2 & UNIVERSAL SUITE
---  Clean Architecture & Zero-Miss Shoot Engine
+--  CRIMSON BLADE - HIGH-END MM2 & UNIVERSAL SUITE (V2 FINAL)
+--  Kinematic Ballistic 3-Axis Engine + True Silent Aim + Kill Aura
 -- ==========================================================
 
 local Players = game:GetService("Players")
@@ -16,13 +16,28 @@ local TextChatService = game:GetService("TextChatService")
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
+-- [[ CONSTANTES BALÍSTICAS MM2 ]]
+local BULLET_SPEED = 1000 -- Velocidad del proyectil del revólver en studs/s
+
 -- [[ CONTENEDORES DE DATOS GLOBALES ]]
 local playerDataESP = {}
 local gamePlayerData = {}
 getgenv().targetPlayerInputText = ""
 
+-- [[ VARIABLES DE ESTADO Y COMBATE ]]
+local silentAimEnabled = true
+local silentAimFOV = 200
+local useFOVCheck = false
+
 local autoShootMurderer = false
 local killClosestEnabled = false
+local killAuraEnabled = false
+local killAuraRadius = 7
+local killAuraDebounce = false
+
+local autoPickupEnabled = false
+local pickupDebounce = false
+
 local antiFlingActive = false
 local antiFlingLastPos = Vector3.zero
 
@@ -32,6 +47,8 @@ local hitboxSizeValue = 8
 local cachedMurderer = nil
 local gunButtonGui = nil
 local knifeButtonGui = nil
+local knifeActionDebounce = false
+local shootActionDebounce = false
 
 local MobileTargetGui = nil
 if gethui then
@@ -40,7 +57,7 @@ else
     MobileTargetGui = game:GetService("CoreGui")
 end
 
--- [[ BUSCADORES DE OBJETOS Y ROLES ]]
+-- [[ BUSCADORES DE ROLES MM2 ]]
 local function getPlayerByName(list)
     if list == nil or list == "" then return nil end
     local broken = {}
@@ -159,6 +176,7 @@ end
 local function resetRoundCombatStates()
     killClosestEnabled = false
     autoShootMurderer = false
+    killAuraEnabled = false
     for _, p in ipairs(Players:GetPlayers()) do
         if p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
             p.Character.HumanoidRootPart.Anchored = false
@@ -251,10 +269,9 @@ local function executeFlingAction(targetPlayer)
     end)
 end
 
--- [[ VARIABLES DE ESTADO ]]
+-- [[ ESTADOS DE MOVILIDAD Y VUELO ]]
 local aimbotEnabled = false
 local aimbotConn = nil
-local autoPickupEnabled = false
 local targetSpeed = 16
 
 local airWalkEnabled = false
@@ -263,7 +280,6 @@ local noclipConnection = nil
 local airWalkConnection = nil
 local currentAirWalkHeight = 0
 
--- [[ MÓDULO DE VUELO ]]
 local isFlying = false
 local flyMaxSpeed = 50
 local flyAcceleration = 2
@@ -348,11 +364,11 @@ local function stopFly()
     currentFlySpeed = 0
 end
 
--- Carga de Rayfield
+-- Carga del Framework Rayfield UI
 local Rayfield = loadstring(game:HttpGet('https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua'))()
 
 -- ==========================================================
--- GESTIÓN DE ROLES Y EVENTOS MM2
+-- GESTIÓN DE ROLES Y EVENTOS DE RED MM2
 -- ==========================================================
 local globalRemotes = ReplicatedStorage:WaitForChild("Remotes", 5)
 if globalRemotes and globalRemotes:FindFirstChild("Gameplay") and globalRemotes.Gameplay:FindFirstChild("PlayerDataChanged") then
@@ -387,57 +403,185 @@ task.spawn(function()
 end)
 
 -- ==========================================================
--- MOTOR DE DISPARO EXACTO (ZERO-DISTANCE + WALLCHECK)
+-- 🎯 2. MOTOR BALÍSTICO CINEMÁTICO 3D (TIER-1 SILENT AIM)
 -- ==========================================================
-local function runShootActionNATIVE()
-    local char = LocalPlayer.Character
-    if not char then return end
-
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    local gun = char:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
-    if not gun then return end
-
-    -- Equipar arma si está guardada
-    if gun.Parent == backpack then
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then hum:EquipTool(gun) end
-        task.wait(0.04)
-    end
-
-    local murderer = cachedMurderer or findMurderer() or findSheriffNotMe()
-    if not murderer or not murderer.Character then return end
-
-    local mRoot = murderer.Character:FindFirstChild("HumanoidRootPart")
-    local mTorso = murderer.Character:FindFirstChild("UpperTorso") or murderer.Character:FindFirstChild("Torso") or mRoot
-    local myRoot = char:FindFirstChild("HumanoidRootPart")
-    if not mRoot or not mTorso or not myRoot then return end
-
-    -- Comprobación de pared (evita disparar a través de muros sólidos)
-    local rayParams = RaycastParams.new()
-    rayParams.FilterType = Enum.RaycastFilterType.Exclude
-    rayParams.FilterDescendantsInstances = {char, murderer.Character}
+local function getKinematicPredictedPosition(targetPlayer, originPos)
+    if not targetPlayer or not targetPlayer.Character then return nil end
     
-    local ray = Workspace:Raycast(myRoot.Position, (mTorso.Position - myRoot.Position), rayParams)
-    if ray and ray.Instance and ray.Instance.CanCollide then
-        return -- Hay una pared sólida en medio, no gastar bala
+    local char = targetPlayer.Character
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local torso = char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or root
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    
+    if not root or not torso or not hum or hum.Health <= 0 then return nil end
+
+    local currentPos = torso.Position
+    local linearVelocity = root.AssemblyLinearVelocity
+    local moveDir = hum.MoveDirection
+    local walkSpeed = hum.WalkSpeed
+    local gravity = Workspace.Gravity
+
+    -- Extracción dinámica de latencia real (RTT)
+    local pingSeconds = 0.03
+    pcall(function()
+        pingSeconds = LocalPlayer:GetNetworkPing()
+    end)
+    if pingSeconds < 0.01 then pingSeconds = 0.03 end
+
+    -- Respaldo del vector horizontal en 3 ejes ante Strafe brusco
+    local horizontalVel
+    local currentHorizVel = Vector3.new(linearVelocity.X, 0, linearVelocity.Z)
+    if moveDir.Magnitude > 0.05 then
+        horizontalVel = Vector3.new(moveDir.X, 0, moveDir.Z).Unit * math.max(currentHorizVel.Magnitude, walkSpeed)
+    else
+        horizontalVel = currentHorizVel
     end
 
-    -- Ejecución de disparo Zero-Distance infalible
-    local shootRemote = gun:FindFirstChild("Shoot")
-    if shootRemote then
-        pcall(function()
-            shootRemote:FireServer(
-                CFrame.new(mTorso.Position + Vector3.new(0, 0.15, 0)),
-                CFrame.new(mTorso.Position)
-            )
-        end)
+    local verticalVel = linearVelocity.Y
+    local inAir = (hum.FloorMaterial == Enum.Material.Air) or (math.abs(verticalVel) > 0.5)
+
+    -- Estimación inicial basada en velocidad del proyectil
+    local initialDist = (currentPos - originPos).Magnitude
+    local timeToHit = pingSeconds + (initialDist / BULLET_SPEED)
+    local predictedPos = currentPos
+
+    -- Bucle iterativo de convergencia cinemática 3D acelerada
+    for _ = 1, 3 do
+        local predX = currentPos.X + (horizontalVel.X * timeToHit)
+        local predZ = currentPos.Z + (horizontalVel.Z * timeToHit)
+        local predY = currentPos.Y
+
+        if inAir then
+            -- Ecuación física de trayectoria balística vertical: y0 + vy*t - 0.5*g*t^2
+            predY = currentPos.Y + (verticalVel * timeToHit) - (0.5 * gravity * (timeToHit ^ 2))
+        end
+
+        predictedPos = Vector3.new(predX, predY, predZ)
+        local dynamicDistance = (predictedPos - originPos).Magnitude
+        timeToHit = pingSeconds + (dynamicDistance / BULLET_SPEED)
     end
+
+    return predictedPos
 end
 
+-- ==========================================================
+-- HOOK DE SILENT AIM REAL (__NAMECALL)
+-- ==========================================================
+local function isWithinFOV(targetPosition)
+    if not useFOVCheck then return true end
+    local screenPos, onScreen = Camera:WorldToViewportPoint(targetPosition)
+    if not onScreen then return false end
+    
+    local mousePos = UserInputService:GetMouseLocation()
+    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+    return dist <= silentAimFOV
+end
+
+if hookmetamethod then
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+
+        if not checkcaller() and silentAimEnabled and method == "FireServer" and tostring(self) == "Shoot" then
+            local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Gun")
+            if tool and self.Parent == tool then
+                local murderer = cachedMurderer or findMurderer() or findSheriffNotMe()
+                if murderer and murderer.Character then
+                    local mTorso = murderer.Character:FindFirstChild("UpperTorso") or murderer.Character:FindFirstChild("Torso") or murderer.Character:FindFirstChild("HumanoidRootPart")
+                    local rightHand = LocalPlayer.Character:FindFirstChild("RightHand") or LocalPlayer.Character:FindFirstChild("Right Arm") or LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+
+                    if mTorso and rightHand then
+                        local shootOrigin = rightHand.Position
+
+                        if isWithinFOV(mTorso.Position) then
+                            local rayParams = RaycastParams.new()
+                            rayParams.FilterType = Enum.RaycastFilterType.Exclude
+                            rayParams.FilterDescendantsInstances = {LocalPlayer.Character, murderer.Character}
+                            rayParams.IgnoreWater = true
+
+                            local ray = Workspace:Raycast(shootOrigin, (mTorso.Position - shootOrigin), rayParams)
+                            local wallBlocking = (ray and ray.Instance and ray.Instance.CanCollide and ray.Instance.Transparency < 0.8)
+
+                            if not wallBlocking then
+                                local predictedTargetPos = getKinematicPredictedPosition(murderer, shootOrigin)
+                                if predictedTargetPos then
+                                    args[1] = CFrame.new(shootOrigin)
+                                    args[2] = CFrame.new(predictedTargetPos)
+                                    return oldNamecall(self, unpack(args))
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        return oldNamecall(self, ...)
+    end))
+end
+
+local function runShootActionNATIVE()
+    if shootActionDebounce then return end
+    shootActionDebounce = true
+
+    pcall(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+
+        local backpack = LocalPlayer:FindFirstChild("Backpack")
+        local gun = char:FindFirstChild("Gun") or (backpack and backpack:FindFirstChild("Gun"))
+        if not gun then return end
+
+        if gun.Parent == backpack then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum:EquipTool(gun) end
+            task.wait(0.05)
+        end
+
+        local murderer = cachedMurderer or findMurderer() or findSheriffNotMe()
+        if not murderer or not murderer.Character then return end
+
+        local mRoot = murderer.Character:FindFirstChild("HumanoidRootPart")
+        local mTorso = murderer.Character:FindFirstChild("UpperTorso") or murderer.Character:FindFirstChild("Torso") or mRoot
+        local myRoot = char:FindFirstChild("HumanoidRootPart")
+        local rightHand = char:FindFirstChild("RightHand") or char:FindFirstChild("Right Arm") or myRoot
+        if not mRoot or not mTorso or not myRoot or not rightHand then return end
+
+        local shootOrigin = rightHand.Position
+
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        rayParams.FilterDescendantsInstances = {char, murderer.Character}
+        rayParams.IgnoreWater = true
+        
+        local ray = Workspace:Raycast(shootOrigin, (mTorso.Position - shootOrigin), rayParams)
+        if ray and ray.Instance and ray.Instance.CanCollide and ray.Instance.Transparency < 0.8 then
+            return
+        end
+
+        local targetPredictedPos = getKinematicPredictedPosition(murderer, shootOrigin)
+        if not targetPredictedPos then return end
+
+        local shootRemote = gun:FindFirstChild("Shoot")
+        if shootRemote then
+            shootRemote:FireServer(
+                CFrame.new(shootOrigin),
+                CFrame.new(targetPredictedPos)
+            )
+        end
+    end)
+
+    task.wait(0.25)
+    shootActionDebounce = false
+end
+
+-- ==========================================================
 -- BUCLE AUTO SHOOT MURDERER
+-- ==========================================================
 task.spawn(function()
     while true do
-        task.wait(0.2)
+        task.wait(0.18)
         if autoShootMurderer then
             pcall(function()
                 local hasGun = (LocalPlayer:FindFirstChild("Backpack") and LocalPlayer.Backpack:FindFirstChild("Gun")) or (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Gun"))
@@ -449,7 +593,96 @@ task.spawn(function()
     end
 end)
 
+-- ==========================================================
+-- 🧲 3. RECOLECCIÓN SEGURA DE PISTOLA (GUN-TO-TORSO MAGNET)
+-- ==========================================================
+task.spawn(function()
+    while true do
+        task.wait(0.15)
+        if autoPickupEnabled and not pickupDebounce then
+            pcall(function()
+                local char = LocalPlayer.Character
+                local torso = char and (char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso") or char:FindFirstChild("HumanoidRootPart"))
+                if not torso then return end
+
+                local gd = Workspace:FindFirstChild("GunDrop", true)
+                if gd then
+                    pickupDebounce = true
+                    local targetPart = (gd:IsA("BasePart") and gd) or (gd:IsA("Model") and (gd.PrimaryPart or gd:FindFirstChildWhichIsA("BasePart")))
+                    
+                    if targetPart then
+                        -- Simulación inversa: traemos el objeto hacia nosotros sin mover el cuerpo
+                        local startTime = tick()
+                        repeat
+                            targetPart.CFrame = torso.CFrame
+                            targetPart.AssemblyLinearVelocity = Vector3.zero
+                            targetPart.AssemblyAngularVelocity = Vector3.zero
+                            task.wait(0.02)
+                        until not gd.Parent or (tick() - startTime) > 0.5
+                    end
+                    task.wait(0.3)
+                    pickupDebounce = false
+                end
+            end)
+        end
+    end
+end)
+
+-- ==========================================================
+-- ⚔️ 5. KILL AURA CON CONTROL DE DISTANCIA DINÁMICO
+-- ==========================================================
+task.spawn(function()
+    while true do
+        task.wait(0.1) -- Escaneo continuo optimizado
+        if killAuraEnabled and not killAuraDebounce then
+            pcall(function()
+                if findMurderer() == LocalPlayer and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                    local char = LocalPlayer.Character
+                    local myHRP = char.HumanoidRootPart
+                    local hum = char:FindFirstChildOfClass("Humanoid")
+                    local backpack = LocalPlayer:FindFirstChild("Backpack")
+                    local knife = char:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
+                    
+                    if knife and hum and hum.Health > 0 then
+                        if knife.Parent == backpack then
+                            hum:EquipTool(knife)
+                            task.wait(0.02)
+                        end
+
+                        for _, p in ipairs(Players:GetPlayers()) do
+                            if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                                local pHum = p.Character:FindFirstChildOfClass("Humanoid")
+                                local pHRP = p.Character.HumanoidRootPart
+                                
+                                if pHum and pHum.Health > 0 then
+                                    -- Validación de distancia radial dinámica (Controlada por el Slider)
+                                    local dist = (myHRP.Position - pHRP.Position).Magnitude
+                                    if dist <= killAuraRadius then 
+                                        killAuraDebounce = true
+                                        
+                                        -- Simulación de ataque controlado a corta distancia
+                                        local stabRemote = knife:FindFirstChild("Stab")
+                                        if stabRemote then
+                                            stabRemote:FireServer("Slash")
+                                        end
+                                        
+                                        task.wait(0.2) -- Debounce de seguridad anti-kick
+                                        killAuraDebounce = false
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+-- ==========================================================
 -- KILL CLOSEST PLAYER
+-- ==========================================================
 task.spawn(function()
     while true do
         task.wait(0.2)
@@ -541,7 +774,7 @@ local function toggleGunButton(state)
         Btn.Position = UDim2.new(0.5, -80, 0.35, 0)
         Btn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
         Btn.Font = Enum.Font.GothamBold
-        Btn.Text = "Shoot Murderer (100%)"
+        Btn.Text = "Shoot Murderer (Kinematic)"
         Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
         Btn.TextSize = 11
         Btn.Active = true
@@ -563,6 +796,7 @@ local function toggleGunButton(state)
     end
 end
 
+-- 🎯 1. CORRECCIÓN DEL BOTÓN FLOTANTE DEL CUCHILLO
 local function toggleKnifeButton(state)
     pcall(function()
         if knifeButtonGui then knifeButtonGui:Destroy(); knifeButtonGui = nil end
@@ -576,11 +810,11 @@ local function toggleKnifeButton(state)
 
         local Btn = Instance.new("TextButton")
         Btn.Name = "BtnKnife"
-        Btn.Size = UDim2.new(0, 200, 0, 45)
-        Btn.Position = UDim2.new(0.5, -100, 0.45, 0)
+        Btn.Size = UDim2.new(0, 160, 0, 45)
+        Btn.Position = UDim2.new(0.5, -80, 0.45, 0)
         Btn.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
         Btn.Font = Enum.Font.GothamBold
-        Btn.Text = "Knife Action"
+        Btn.Text = "Knife Action (Stab/Slash)"
         Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
         Btn.TextSize = 11
         Btn.Active = true
@@ -597,15 +831,41 @@ local function toggleKnifeButton(state)
         Stroke.Parent = Btn
 
         Btn.MouseButton1Click:Connect(function()
-            -- Acción de cuchillo
+            if knifeActionDebounce then return end
+            knifeActionDebounce = true
+
+            pcall(function()
+                local char = LocalPlayer.Character
+                if not char then return end
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                local backpack = LocalPlayer:FindFirstChild("Backpack")
+                
+                -- Escaneo estricto de inventario y personaje
+                local knife = char:FindFirstChild("Knife") or (backpack and backpack:FindFirstChild("Knife"))
+
+                if knife and hum and hum.Health > 0 then
+                    if knife.Parent == backpack then
+                        hum:EquipTool(knife)
+                        task.wait(0.03) -- Micro-delay síncrono obligatorio
+                    end
+                    local stabRemote = knife:FindFirstChild("Stab")
+                    if stabRemote then
+                        stabRemote:FireServer("Slash") -- Disparador nativo de MM2
+                    end
+                end
+            end)
+
+            task.wait(0.25) -- Cooldown anti-kick por spam de red
+            knifeActionDebounce = false
         end)
     end
 end
 
 -- ==========================================================
--- MOTOR ESP
+-- 👁️ 4. MOTOR ESP INTEGRADO (HIGHLIGHTS & BILLBOARDS)
 -- ==========================================================
 local activeHighlights = {}
+local activeBillboards = {}
 local activeGunDropHighlight = nil
 local activeGunDropBillboard = nil
 local activeTrapHighlights = {}
@@ -625,6 +885,12 @@ local function clearESP()
         if highlight then highlight:Destroy() end
     end
     table.clear(activeHighlights)
+
+    for _, billboard in pairs(activeBillboards) do
+        if billboard then billboard:Destroy() end
+    end
+    table.clear(activeBillboards)
+
     if activeGunDropHighlight then activeGunDropHighlight:Destroy() activeGunDropHighlight = nil end
     if activeGunDropBillboard then activeGunDropBillboard:Destroy() activeGunDropBillboard = nil end
     for _, h in pairs(activeTrapHighlights) do if h then h:Destroy() end end
@@ -659,8 +925,8 @@ local function updateGunDropESP()
             local bg = Instance.new("BillboardGui")
             bg.Name = "GunDrop_Billboard"
             bg.AlwaysOnTop = true
-            bg.Size = UDim2.new(0, 160, 0, 40)
-            bg.StudsOffset = Vector3.new(0, 2, 0)
+            bg.Size = UDim2.new(0, 140, 0, 30)
+            bg.StudsOffset = Vector3.new(0, 1.8, 0)
             bg.Adornee = targetAdornee
             bg.Parent = MobileTargetGui
 
@@ -670,11 +936,11 @@ local function updateGunDropESP()
             lbl.Font = Enum.Font.GothamBold
             lbl.Text = "DROPPED GUN"
             lbl.TextColor3 = Color3.fromRGB(255, 255, 0)
-            lbl.TextSize = 14
+            lbl.TextSize = 13
             lbl.Parent = bg
 
             local stroke = Instance.new("UIStroke")
-            stroke.Thickness = 2
+            stroke.Thickness = 1.5
             stroke.Color = Color3.fromRGB(0, 0, 0)
             stroke.Parent = lbl
 
@@ -713,21 +979,31 @@ local function updateTrapsESP()
 end
 
 local function applyHighlightToCharacter(player, character)
-    if not espActive or not character then return end
+    if not espActive or not character or player == LocalPlayer then return end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
+    local head = character:FindFirstChild("Head")
     local backpack = player:FindFirstChild("Backpack")
     
     local hl = activeHighlights[character]
     if not hl or not hl.Parent then
         if hl then hl:Destroy() end
         hl = Instance.new("Highlight")
-        hl.Name, hl.DepthMode, hl.FillTransparency, hl.OutlineTransparency, hl.Adornee, hl.Parent = "Mobile_ESP", Enum.HighlightDepthMode.AlwaysOnTop, 1, 0, character, MobileTargetGui
+        hl.Name = "Player_Highlight"
+        hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        hl.FillTransparency = 1
+        hl.OutlineTransparency = 0
+        hl.Adornee = character
+        hl.Parent = MobileTargetGui
         activeHighlights[character] = hl
     end
 
     if humanoid and humanoid.Health <= 0 then
         hl.OutlineColor = Color3.fromRGB(0, 255, 8)
         hl.Enabled = true
+        if activeBillboards[character] then
+            activeBillboards[character]:Destroy()
+            activeBillboards[character] = nil
+        end
         return
     end
 
@@ -740,18 +1016,71 @@ local function applyHighlightToCharacter(player, character)
 
     if ignoreInnocents and not isMurderer and not isSheriff and not isHero and not hasGun then
         if activeHighlights[character] then activeHighlights[character]:Destroy() activeHighlights[character] = nil end
+        if activeBillboards[character] then activeBillboards[character]:Destroy() activeBillboards[character] = nil end
         return
     end
 
     local targetColor = Color3.fromRGB(0, 255, 8)
+    local roleText = nil
+    local textColor = Color3.fromRGB(255, 255, 255)
+
     if isMurderer then
-        targetColor = Color3.fromRGB(255, 0, 4)
-    elseif (isSheriff or isHero or hasGun) then
-        targetColor = Color3.fromRGB(0, 150, 255)
+        targetColor = Color3.fromRGB(255, 40, 40)
+        roleText = "MURDERER"
+        textColor = Color3.fromRGB(255, 85, 85) -- Rojo Claro
+    elseif isSheriff then
+        targetColor = Color3.fromRGB(40, 140, 255)
+        roleText = "SHERIFF"
+        textColor = Color3.fromRGB(80, 185, 255) -- Azul Claro
+    elseif isHero or hasGun then
+        targetColor = Color3.fromRGB(0, 210, 255)
+        roleText = "HERO"
+        textColor = Color3.fromRGB(95, 220, 255) -- Cyan Claro
     end
 
     if hl.OutlineColor ~= targetColor then hl.OutlineColor = targetColor end
     hl.Enabled = true
+
+    -- Renderizado de Etiquetas Flotantes
+    if roleText and head and player ~= LocalPlayer then
+        local bg = activeBillboards[character]
+        if not bg or not bg.Parent then
+            if bg then bg:Destroy() end
+            bg = Instance.new("BillboardGui")
+            bg.Name = "Role_Billboard"
+            bg.AlwaysOnTop = true
+            bg.Size = UDim2.new(0, 140, 0, 30)
+            bg.StudsOffset = Vector3.new(0, 2.5, 0) -- Letras arriba sin obstruir
+            bg.Adornee = head
+            bg.Parent = MobileTargetGui
+
+            local lbl = Instance.new("TextLabel")
+            lbl.Name = "RoleLabel"
+            lbl.Size = UDim2.new(1, 0, 1, 0)
+            lbl.BackgroundTransparency = 1
+            lbl.Font = Enum.Font.GothamBold
+            lbl.TextSize = 13
+            lbl.Parent = bg
+
+            local stroke = Instance.new("UIStroke")
+            stroke.Thickness = 1.5
+            stroke.Color = Color3.fromRGB(0, 0, 0)
+            stroke.Parent = lbl
+
+            activeBillboards[character] = bg
+        end
+
+        local lbl = bg:FindFirstChild("RoleLabel")
+        if lbl then
+            lbl.Text = roleText
+            lbl.TextColor3 = textColor
+        end
+    else
+        if activeBillboards[character] then
+            activeBillboards[character]:Destroy()
+            activeBillboards[character] = nil
+        end
+    end
 end
 
 local function reloadESP()
@@ -762,7 +1091,7 @@ local function reloadESP()
         return 
     end
     for _, player in ipairs(Players:GetPlayers()) do
-        if player.Character then
+        if player ~= LocalPlayer and player.Character then
             applyHighlightToCharacter(player, player.Character)
         end
     end
@@ -771,6 +1100,7 @@ local function reloadESP()
 end
 
 local function monitorPlayerWeapons(player)
+    if player == LocalPlayer then return end
     local function onCharacter(character)
         if not character then return end
         applyHighlightToCharacter(player, character)
@@ -824,6 +1154,7 @@ local function startESP()
     end
 
     local function setupPlayerESP(player)
+        if player == LocalPlayer then return end
         if player.Character then
             task.spawn(applyHighlightToCharacter, player, player.Character)
         end
@@ -921,12 +1252,12 @@ Rayfield.Theme.DarkCrimson = {
 }
 
 -- ==========================================================
--- CREACIÓN DE VENTANA
+-- CREACIÓN DE VENTANA INTERACTIVA
 -- ==========================================================
 local Window = Rayfield:CreateWindow({
     Name = "Crimson Blade",
-    LoadingTitle = "Iniciando Motor High-End",
-    LoadingSubtitle = "Zero-Miss Aim Engine",
+    LoadingTitle = "Iniciando Crimson Blade",
+    LoadingSubtitle = "Kinematic Ballistics 3D & True Silent Aim",
     Theme = "DarkCrimson",
     DisableRayfieldPrompts = true,
     ConfigurationSaving = {
@@ -960,42 +1291,45 @@ local SettingsTab  = Window:CreateTab("Settings", "settings")
 -- ==========================================================
 -- PESTAÑA: MAIN
 -- ==========================================================
-MainTab:CreateSection("blatant module")
-
--- AUTO-PICKUP
-task.spawn(function() 
-    while task.wait(0.05) do 
-        pcall(function() 
-            if autoPickupEnabled then
-                local gd = Workspace:FindFirstChild("GunDrop", true) 
-                if gd and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then 
-                    local hrp = LocalPlayer.Character.HumanoidRootPart
-                    local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-                    local oldCFrame = hrp.CFrame
-                    local targetPivot = gd:IsA("Model") and (gd.PrimaryPart and gd.PrimaryPart.CFrame or gd:GetPivot()) or gd.CFrame
-                    
-                    if targetPivot then
-                        local layCFrame = targetPivot * CFrame.Angles(math.rad(90), 0, 0)
-                        hrp.AssemblyLinearVelocity = Vector3.zero
-                        hrp.CFrame = layCFrame + Vector3.new(0, 0.5, 0)
-                        
-                        task.wait(0.08)
-                        
-                        hrp.CFrame = oldCFrame
-                        hrp.AssemblyLinearVelocity = Vector3.zero
-                        hrp.AssemblyAngularVelocity = Vector3.zero
-                        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Running) end
-                        task.wait(0.5)
-                    end
-                end
-            end
-        end) 
-    end 
-end)
+MainTab:CreateSection("silent aim module")
 
 MainTab:CreateToggle({
-    Name = "Auto-Pickup",
-    Info = "Recoge la pistola instantáneamente al caer.",
+    Name = "Silent Aim (100% Hit)",
+    Info = "Redirige automáticamente la bala al asesino con compensación cinemática 3D.",
+    CurrentValue = true,
+    Flag = "SilentAimFlag",
+    Callback = function(Value)
+        silentAimEnabled = Value
+    end,
+})
+
+MainTab:CreateToggle({
+    Name = "Limit by FOV Circle",
+    Info = "Solo redirige la trayectoria dentro del radio FOV.",
+    CurrentValue = false,
+    Flag = "SilentAimFOVToggle",
+    Callback = function(Value)
+        useFOVCheck = Value
+    end,
+})
+
+MainTab:CreateSlider({
+    Name = "Silent Aim FOV Radius",
+    Range = {50, 600},
+    Increment = 10,
+    Suffix = " px",
+    CurrentValue = 200,
+    Flag = "SilentAimFOVSlider",
+    Callback = function(Value)
+        silentAimFOV = Value
+    end,
+})
+
+MainTab:CreateSection("blatant module")
+
+MainTab:CreateToggle({
+    Name = "Gun Magnet (Safe Auto-Pickup)",
+    Info = "Atrae la pistola caída hacia tu torso de forma segura sin mover tu personaje.",
     CurrentValue = false,
     Flag = "AutoPickupFlag",
     Callback = function(Value) autoPickupEnabled = Value end,
@@ -1003,7 +1337,7 @@ MainTab:CreateToggle({
 
 MainTab:CreateToggle({
     Name = "Gun Button",
-    Info = "Botón flotante en pantalla para disparar con 100% de precisión.",
+    Info = "Botón flotante en pantalla para disparar con cálculo balístico.",
     CurrentValue = false,
     Flag = "GunButtonFlag",
     Callback = function(Value) toggleGunButton(Value) end,
@@ -1011,7 +1345,7 @@ MainTab:CreateToggle({
 
 MainTab:CreateToggle({
     Name = "Knife Button",
-    Info = "Activa el botón flotante del cuchillo.",
+    Info = "Botón flotante en pantalla para apuñalar/acuchillar de forma inmediata.",
     CurrentValue = false,
     Flag = "KnifeButtonFlag",
     Callback = function(Value) toggleKnifeButton(Value) end,
@@ -1066,7 +1400,7 @@ MainTab:CreateToggle({
 })
 
 MainTab:CreateButton({
-    Name = "Manual Shoot (100% Hit)",
+    Name = "Manual Shoot (Kinematic)",
     Callback = function()
         runShootActionNATIVE()
     end,
@@ -1079,7 +1413,7 @@ ESPTab:CreateSection("visuals radar")
 
 ESPTab:CreateToggle({
     Name = "Player ESP",
-    Info = "ESP oficial con contornos para Murderer, Sheriff e Inocentes.",
+    Info = "ESP oficial con contornos y títulos para Murderer, Sheriff y Hero.",
     CurrentValue = false,
     Flag = "ESPFlag",
     Callback = function(Value)
@@ -1133,8 +1467,26 @@ ESPTab:CreateToggle({
 MM2AdvTab:CreateSection("combat advanced")
 
 MM2AdvTab:CreateToggle({
+    Name = "Kill Aura",
+    Info = "Elimina automáticamente a cualquier rival que entre en tu radio de acción.",
+    CurrentValue = false,
+    Flag = "KillAuraAdvFlag",
+    Callback = function(Value) killAuraEnabled = Value end,
+})
+
+MM2AdvTab:CreateSlider({
+    Name = "Kill Aura Range",
+    Range = {5, 25},
+    Increment = 1,
+    Suffix = " studs",
+    CurrentValue = 7,
+    Flag = "KillAuraRadiusSlider",
+    Callback = function(Value) killAuraRadius = Value end,
+})
+
+MM2AdvTab:CreateToggle({
     Name = "Auto-Shoot Murderer",
-    Info = "Dispara automáticamente apenas el asesino entra en tu línea de visión.",
+    Info = "Dispara automáticamente con cálculo cinemático de trayectoria 3D.",
     CurrentValue = false,
     Flag = "AutoShootAdvFlag",
     Callback = function(Value) autoShootMurderer = Value end,
@@ -1293,7 +1645,7 @@ UniversalTab:CreateButton({
     end,
 })
 
--- ESCANEO ASÍNCRONO DE TRAMPAS Y ANTI-FLING
+-- ESCANEO DE TRAMPAS Y ANTI-FLING
 task.spawn(function()
     while task.wait(0.3) do
         pcall(function()
@@ -1508,7 +1860,7 @@ SettingsTab:CreateButton({
 
 SettingsTab:CreateButton({
     Name = "Rejoin",
-    Callback = function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer) end,
+    Callback = function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer) end
 })
 
 SettingsTab:CreateSection("hub control")
@@ -1520,6 +1872,7 @@ SettingsTab:CreateButton({
         autoPickupEnabled = false
         autoShootMurderer = false
         killClosestEnabled = false
+        killAuraEnabled = false
         antiFlingActive = false
         hitboxEnabled = false
         airWalkEnabled = false
@@ -1540,7 +1893,7 @@ SettingsTab:CreateButton({
 
 Rayfield:Notify({
     Title = "Crimson Blade",
-    Content = "Crimson Blade cargado con éxito.",
+    Content = "Motor Cinemático 3D & Silent Aim cargados con éxito.",
     Duration = 4,
     Image = 10843394625
 })
